@@ -1,4 +1,8 @@
-"""M0 success check, as code: auth works end to end. Needs the database."""
+"""M0 success check, as code: auth works end to end. Needs the database.
+
+The post-login landing page moved to the `courses` app in M1; see
+`tests/test_courses.py` for what it now shows.
+"""
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -7,9 +11,9 @@ from django.urls import reverse
 
 class AuthFlowTests(TestCase):
     def test_dashboard_requires_login(self):
-        response = self.client.get(reverse("accounts:dashboard"))
+        response = self.client.get(reverse("courses:dashboard"))
         self.assertRedirects(
-            response, f"{reverse('accounts:login')}?next={reverse('accounts:dashboard')}"
+            response, f"{reverse('accounts:login')}?next={reverse('courses:dashboard')}"
         )
 
     def test_signup_logs_in_and_lands_on_dashboard(self):
@@ -24,7 +28,7 @@ class AuthFlowTests(TestCase):
             },
             follow=True,
         )
-        self.assertRedirects(response, reverse("accounts:dashboard"))
+        self.assertRedirects(response, reverse("courses:dashboard"))
         self.assertContains(response, "My courses")
         self.assertTrue(User.objects.filter(username="nadia").exists())
 
@@ -35,17 +39,11 @@ class AuthFlowTests(TestCase):
             reverse("accounts:login"),
             {"username": "nadia", "password": "quiet-precision-42"},
         )
-        self.assertRedirects(login, reverse("accounts:dashboard"))
+        self.assertRedirects(login, reverse("courses:dashboard"))
 
         logout = self.client.post(reverse("accounts:logout"))
         self.assertRedirects(logout, reverse("accounts:login"))
         self.assertRedirects(
-            self.client.get(reverse("accounts:dashboard")),
-            f"{reverse('accounts:login')}?next={reverse('accounts:dashboard')}",
+            self.client.get(reverse("courses:dashboard")),
+            f"{reverse('accounts:login')}?next={reverse('courses:dashboard')}",
         )
-
-    def test_dashboard_shows_the_empty_state(self):
-        User.objects.create_user("nadia", password="quiet-precision-42")
-        self.client.login(username="nadia", password="quiet-precision-42")
-        response = self.client.get(reverse("accounts:dashboard"))
-        self.assertContains(response, "No courses yet")

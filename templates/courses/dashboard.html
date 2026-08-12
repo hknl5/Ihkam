@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}My courses — إحكام{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>My courses</h1>
+  <p>Every exam starts from a course and the material you taught in it.</p>
+</div>
+
+<div class="split">
+  <section aria-labelledby="course-list-heading">
+    <h2 id="course-list-heading" class="visually-hidden">Your courses</h2>
+
+    {% if courses %}
+      <div class="grid-cards">
+        {% for course in courses %}
+          <article class="card stack--tight">
+            <p class="caption num">{{ course.code }}</p>
+            <h3><a href="{{ course.get_absolute_url }}" dir="auto">{{ course.name }}</a></h3>
+            <p class="caption">
+              {{ course.get_level_display }} · {{ course.get_content_language_display }}
+            </p>
+            <p class="caption">
+              {% if course.file_count %}
+                <span class="num">{{ course.file_count }}</span>
+                file{{ course.file_count|pluralize }} uploaded
+              {% else %}
+                No material yet
+              {% endif %}
+            </p>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h2>No courses yet</h2>
+        <p>Create a course to upload lecture material and start drafting an exam.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="card" aria-labelledby="create-course-heading">
+    <h2 id="create-course-heading" class="section-title">Create a course</h2>
+
+    {% if form.non_field_errors %}
+      <div class="banner banner--danger" role="alert">
+        <span class="banner__label">Check the details.</span>
+        <span>{% for error in form.non_field_errors %}{{ error }} {% endfor %}</span>
+      </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% for field in form %}
+        {% include "partials/field.html" with field=field %}
+      {% endfor %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--primary">Create course</button>
+      </div>
+    </form>
+  </aside>
+</div>
+{% endblock %}

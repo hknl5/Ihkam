@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "accounts",
     "agents",
+    "courses",
 ]
 
 MIDDLEWARE = [
@@ -108,10 +109,18 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# --- Media (uploaded course material) ---------------------------------------
+
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / env("DJANGO_MEDIA_ROOT", "media")
+
+# Lecture decks are large; keep big uploads on disk rather than in memory.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
 # --- Auth flow --------------------------------------------------------------
 
 LOGIN_URL = "accounts:login"
-LOGIN_REDIRECT_URL = "accounts:dashboard"
+LOGIN_REDIRECT_URL = "courses:dashboard"
 LOGOUT_REDIRECT_URL = "accounts:login"
 
 # --- LLM provider (see agents/provider.py, §3 of the build plan) -------------

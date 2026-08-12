@@ -349,3 +349,89 @@ table.data td.num { font-family: var(--font-mono); }
   .card { padding: var(--space-4); }
   .action-bar .btn { flex: 1 1 auto; }
 }
+
+/* ---------- M1: courses, upload, extracted text ---------- */
+
+/* Content beside a form panel. Stacks on small screens; logical properties
+   keep the panel on the correct side under dir="rtl". */
+.split {
+  display: grid;
+  gap: var(--space-8);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+@media (min-width: 60rem) {
+  .split { grid-template-columns: minmax(0, 1fr) 22rem; }
+}
+
+.section-title {
+  font-size: var(--fs-h3);
+  margin-block-end: var(--space-4);
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--fs-caption);
+  color: var(--ink-600);
+  margin-block-end: var(--space-4);
+}
+.crumbs a { color: var(--ink-600); }
+.crumbs a:hover { color: var(--ink-900); }
+
+.file-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.file-name {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Extracted text is read, not skimmed: reading measure, paper surface,
+   original line breaks preserved. dir="auto" on the element handles Arabic. */
+.page-card__head { margin-block-end: var(--space-4); }
+.page-card__head .caption { margin-block-start: var(--space-1); }
+
+.page-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: var(--measure);
+  line-height: var(--lh-read);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-start: var(--space-6);
+}
+.pager__jump {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline: auto;
+  font-size: var(--fs-caption);
+  color: var(--ink-600);
+}
+.pager__jump input {
+  width: 5.5rem;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+/* An inert edge-of-document control: dimmed, but still announced. */
+.pager [data-disabled] { opacity: .5; cursor: not-allowed; }

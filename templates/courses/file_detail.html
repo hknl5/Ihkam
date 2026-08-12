@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}{{ source_file.original_name }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <span dir="auto">{{ source_file.original_name }}</span>
+</nav>
+
+<div class="page-head">
+  <h1 dir="auto">{{ source_file.original_name }}</h1>
+  <p>
+    {{ source_file.get_kind_display }} ·
+    <span class="num">{{ source_file.page_count }}</span>
+    page{{ source_file.page_count|pluralize }} extracted ·
+    <span class="status status--{{ source_file.status_tone }}">{{ source_file.get_status_display }}</span>
+  </p>
+</div>
+
+{% if source_file.status_detail %}
+  <div class="banner banner--warn" role="status">
+    <span class="banner__label">Known gap.</span>
+    <span>{{ source_file.status_detail }}</span>
+  </div>
+{% endif %}
+
+{% if extracted_page %}
+  <article class="card page-card">
+    <header class="page-card__head">
+      <h2 class="section-title">Page <span class="num">{{ extracted_page.number }}</span></h2>
+      <p class="caption">
+        of <span class="num">{{ source_file.page_count }}</span> —
+        page numbers are kept so later questions can cite their source.
+      </p>
+    </header>
+
+    {% if extracted_page.is_empty %}
+      <p class="status status--warn">
+        No text on this page — it is likely an image, a diagram or a scan.
+      </p>
+    {% else %}
+      <div class="page-text" dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>{{ extracted_page.text }}</div>
+    {% endif %}
+  </article>
+
+  <nav class="pager" aria-label="Pages">
+    {% if page.has_previous %}
+      <a class="btn btn--secondary" href="?page={{ page.previous_page_number }}">Previous page</a>
+    {% else %}
+      <span class="btn btn--secondary" aria-disabled="true" data-disabled>Previous page</span>
+    {% endif %}
+
+    <form method="get" class="pager__jump">
+      <label for="page-jump">Go to page</label>
+      <input type="number" id="page-jump" name="page" min="1"
+             max="{{ source_file.page_count }}" value="{{ extracted_page.number }}"
+             inputmode="numeric">
+      <button type="submit" class="btn btn--ghost">Go</button>
+    </form>
+
+    {% if page.has_next %}
+      <a class="btn btn--secondary" href="?page={{ page.next_page_number }}">Next page</a>
+    {% else %}
+      <span class="btn btn--secondary" aria-disabled="true" data-disabled>Next page</span>
+    {% endif %}
+  </nav>
+{% else %}
+  <div class="empty-state">
+    <h2>Nothing to read here</h2>
+    <p>{{ source_file.status_detail|default:"No text could be extracted from this file." }}</p>
+    <div class="action-bar" style="justify-content: center;">
+      <a class="btn btn--primary" href="{{ course.get_absolute_url }}">Back to the course</a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

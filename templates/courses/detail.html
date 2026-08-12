@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}{{ course.code }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <span class="num">{{ course.code }}</span>
+</nav>
+
+<div class="page-head">
+  <h1 dir="auto">{{ course.name }}</h1>
+  <p>
+    <span class="num">{{ course.code }}</span> ·
+    {{ course.get_level_display }} ·
+    Content language: {{ course.get_content_language_display }}
+  </p>
+</div>
+
+<ol class="stepper" aria-label="Where you are">
+  <li class="is-done">Course</li>
+  <li class="is-current">Upload</li>
+  <li>Topics</li>
+  <li>Blueprint</li>
+  <li>Generate</li>
+  <li>Review</li>
+</ol>
+
+<div class="split" style="margin-block-start: var(--space-8);">
+  <section aria-labelledby="material-heading">
+    <h2 id="material-heading" class="section-title">Course material</h2>
+
+    {% if files %}
+      <div class="stack">
+        {% for source_file in files %}
+          <article class="card card--rail {% if source_file.is_ready %}is-approved{% elif source_file.status == 'failed' %}is-rejected{% elif source_file.status == 'pending' %}{% else %}is-attention{% endif %}">
+            <div class="file-row">
+              <div class="stack--tight">
+                <h3 class="file-name" dir="auto">{{ source_file.original_name }}</h3>
+                <p class="caption">
+                  {{ source_file.get_kind_display }} ·
+                  <span class="num">{{ source_file.page_count }}</span>
+                  page{{ source_file.page_count|pluralize }} ·
+                  uploaded {{ source_file.uploaded_at|date:"j M Y, H:i" }}
+                </p>
+                <p class="status status--{{ source_file.status_tone }}">
+                  {{ source_file.get_status_display }}
+                </p>
+                {% if source_file.status_detail %}
+                  <p class="caption">{{ source_file.status_detail }}</p>
+                {% endif %}
+              </div>
+              <div class="action-bar">
+                {% if source_file.page_count %}
+                  <a class="btn btn--secondary" href="{{ source_file.get_absolute_url }}">
+                    Read extracted text
+                  </a>
+                {% endif %}
+                <form method="post"
+                      action="{% url 'courses:file_delete' course.pk source_file.pk %}">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn--ghost">Remove</button>
+                </form>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h2>No material yet</h2>
+        <p>Upload a lecture PDF to begin. إحكام reads it and keeps the page numbers,
+           so every question it later drafts can point back to its source.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="card" aria-labelledby="upload-heading">
+    <h2 id="upload-heading" class="section-title">Upload material</h2>
+
+    <form method="post" enctype="multipart/form-data" novalidate>
+      {% csrf_token %}
+      {% for field in form %}
+        {% include "partials/field.html" with field=field %}
+      {% endfor %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--primary">Upload</button>
+      </div>
+    </form>
+
+    <p class="caption" style="margin-block-start: var(--space-4);">
+      Scanned or photographed PDFs have no text layer to read. Text recognition (OCR)
+      is not part of this version — upload a text-based PDF for now.
+    </p>
+  </aside>
+</div>
+{% endblock %}

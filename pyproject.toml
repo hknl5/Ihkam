@@ -10,5 +10,11 @@ dependencies = [
     "pgvector>=0.5.0",
     "psycopg[binary]>=3.3.4",
     "pydantic>=2.13.4",
+    "pypdf>=6.15.0",
     "python-dotenv>=1.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "reportlab>=5.0.0",
 ]

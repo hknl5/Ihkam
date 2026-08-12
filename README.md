@@ -3,8 +3,9 @@
 Intelligent agentic system for exam generation and review.
 إحكام prepares the draft and surfaces imbalances. **The final decision always belongs to the instructor.**
 
-Build status: **M0 complete** — project skeleton, instructor auth, the `LLMProvider`
-abstraction (§3), and the design system (§5). Nothing from M1 onward exists yet.
+Build status: **M1 complete** — M0 (skeleton, instructor auth, the `LLMProvider`
+abstraction §3, the design system §5) plus courses, file upload and PDF text
+extraction with page numbers preserved. Nothing from M2 onward exists yet.
 
 ## Requirements
 
@@ -41,6 +42,26 @@ uv run python manage.py llm_ping --provider gemini
 ```
 
 `AirLLMProvider` is a deliberate stub until Stage 5.
+
+## Course material (M1)
+
+An instructor creates a course, uploads a lecture file, and reads the extracted
+text page by page. `courses/services/ingest.py` is the single entry point:
+`extract_pages(fileobj, kind)` returns one `PageText` per page, in order, with
+whitespace normalised and the **page number preserved** — every later citation
+("source: page 14") is built from it.
+
+- **PDF** is extracted (via `pypdf`).
+- **PowerPoint / Word / plain text** are accepted and stored, but marked
+  *Format not supported yet*; their extractors are stubs behind the same
+  interface, each with a TODO describing what it must do.
+
+**Known gap — scanned PDFs.** A photographed or scanned document has no text
+layer. It does not crash: the file is marked *No text layer*, its page count is
+still recorded, and the instructor is told to upload a text-based PDF. Text
+recognition (OCR) is deliberately deferred.
+
+Uploads are written to `MEDIA_ROOT` (`media/` by default, git-ignored).
 
 ## Tests
 
