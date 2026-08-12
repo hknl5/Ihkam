@@ -38,10 +38,22 @@
       </p>
     </header>
 
-    {% if extracted_page.is_empty %}
+    {% if extracted_page.is_image_only %}
       <p class="status status--warn">
-        No text on this page — it is likely an image, a diagram or a scan.
+        This page has no text layer — its content is an image, a screenshot or a diagram.
       </p>
+      <p class="caption">
+        Reading it needs text recognition (OCR), which is not part of this version.
+        Nothing was lost in extraction: there is no text here to extract.
+        {% if extracted_page.text %}
+          The only readable characters on the page are shown below.
+        {% endif %}
+      </p>
+      {% if extracted_page.text %}
+        <div class="page-text" dir="auto">{{ extracted_page.text }}</div>
+      {% endif %}
+    {% elif extracted_page.is_empty %}
+      <p class="status status--warn">This page is blank.</p>
     {% else %}
       <div class="page-text" dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>{{ extracted_page.text }}</div>
     {% endif %}

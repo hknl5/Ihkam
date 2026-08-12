@@ -58,6 +58,16 @@ def detail(request, pk):
                     f"{source_file.original_name} uploaded — "
                     f"{source_file.page_count} pages extracted.",
                 )
+            elif source_file.has_readable_text:
+                # Partly readable. Say which part is missing rather than
+                # letting a half-read file pass for a complete one.
+                messages.warning(
+                    request,
+                    f"{source_file.original_name} uploaded — "
+                    f"{source_file.page_count - source_file.pages_without_text} of "
+                    f"{source_file.page_count} pages extracted. "
+                    f"{source_file.pages_without_text} have no text layer.",
+                )
             else:
                 messages.warning(
                     request,

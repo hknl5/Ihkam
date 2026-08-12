@@ -51,17 +51,50 @@ text page by page. `courses/services/ingest.py` is the single entry point:
 whitespace normalised and the **page number preserved** — every later citation
 ("source: page 14") is built from it.
 
-- **PDF** is extracted (via `pypdf`).
+- **PDF** is extracted with **PDFium** (`pypdfium2`). It replaced `pypdf`, which
+  silently dropped whole headings from subsetted Arabic fonts; `pdfplumber` /
+  `pdfminer` were also measured and return Arabic in *visual* (reversed) order,
+  so they are not usable here.
 - **PowerPoint / Word / plain text** are accepted and stored, but marked
   *Format not supported yet*; their extractors are stubs behind the same
   interface, each with a TODO describing what it must do.
 
-**Known gap — scanned PDFs.** A photographed or scanned document has no text
-layer. It does not crash: the file is marked *No text layer*, its page count is
-still recorded, and the instructor is told to upload a text-based PDF. Text
-recognition (OCR) is deliberately deferred.
+### Arabic
+
+PDFium reports a lam-alef ligature as its two letters in visual order — every
+`الاصطناعي` would read `االصطناعي`. `repair_lam_alef()` puts them back:
+the two letters of a ligature share one character box, whereas the definite
+article `ال` is two glyphs with two boxes, so the repair is exact and never
+touches ordinary text. Extracted text is stored in logical order and rendered
+with `dir="auto"`.
+
+### Honest reporting of what could not be read
+
+Extraction never passes off a fragment as a full page:
+
+- **Pages with no text layer** (a slide whose body is a screenshot, a scan, a
+  diagram) are flagged `is_image_only`. The file's status becomes *Some pages
+  have no text layer* with the count, and the reader says the page needs OCR.
+  A file where **no** page has text is *No text layer*, as before. OCR is
+  deliberately deferred — but a half-read file is never reported as complete.
+- **Unmappable characters** are counted per file. Some PDFs embed subsetted
+  fonts whose internal character tables are incomplete; the affected glyphs
+  (usually decorative headings) cannot be recovered by any extractor without
+  OCR, so the count is surfaced rather than hidden.
 
 Uploads are written to `MEDIA_ROOT` (`media/` by default, git-ignored).
+
+### Diagnosing an extraction
+
+```bash
+uv run python manage.py extraction_report                 # every uploaded file
+uv run python manage.py extraction_report --file 1 --verbose-pages
+uv run python manage.py extraction_report --reingest      # re-extract, then report
+```
+
+It lists, per page, how much text was stored and why a page is short — blank,
+image-only, or suspiciously thin (which is what a real extraction bug looks
+like).
 
 ## Tests
 

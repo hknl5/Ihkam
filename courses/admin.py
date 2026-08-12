@@ -23,10 +23,25 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(SourceFile)
 class SourceFileAdmin(admin.ModelAdmin):
-    list_display = ("original_name", "course", "kind", "status", "page_count", "uploaded_at")
+    list_display = (
+        "original_name",
+        "course",
+        "kind",
+        "status",
+        "page_count",
+        "pages_without_text",
+        "uploaded_at",
+    )
     list_filter = ("kind", "status")
     search_fields = ("original_name", "course__code", "course__name")
-    readonly_fields = ("page_count", "status_detail", "uploaded_at", "extracted_at")
+    readonly_fields = (
+        "page_count",
+        "pages_without_text",
+        "unmappable_chars",
+        "status_detail",
+        "uploaded_at",
+        "extracted_at",
+    )
 
 
 @admin.register(ExtractedPage)

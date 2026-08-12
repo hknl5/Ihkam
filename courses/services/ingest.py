@@ -36,6 +36,12 @@ class UnsupportedFormatError(Exception):
 class PageText:
     number: int  # 1-based, as the reader sees it
     text: str
+    #: The page carries content (images, diagrams, vector art) but no text
+    #: layer to read. This is the OCR gap, reported rather than hidden.
+    is_image_only: bool = False
+    #: Characters the PDF's own font tables could not map to real letters.
+    #: A defective embedded ToUnicode CMap, not something extraction can fix.
+    unmappable_chars: int = 0
 
 
 # --- Normalisation ----------------------------------------------------------
@@ -72,36 +78,125 @@ def normalize_whitespace(text: str) -> str:
 def extract_pdf(fileobj) -> list[PageText]:
     """One `PageText` per PDF page, in document order.
 
-    Pages with no text layer come back empty rather than missing — an
-    image-only page is still page 7, and the caller reports the gap.
+    Uses PDFium (`pypdfium2`). It was chosen over pypdf on the real uploaded
+    files: pypdf silently dropped every heading set in this document's
+    subsetted Arabic fonts, and PDFium recovers them. PDFium also keeps the
+    logical (not visual) character order for Arabic, which pdfminer/pdfplumber
+    do not — they return Arabic reversed.
+
+    Pages with no text layer come back empty and flagged rather than missing —
+    an image-only page is still page 7, and the caller reports the gap.
     """
-    from pypdf import PdfReader
-    from pypdf.errors import PdfReadError
+    import pypdfium2 as pdfium
 
     try:
-        reader = PdfReader(fileobj)
-        if reader.is_encrypted:
-            # An empty password unlocks most "protected" lecture PDFs.
-            try:
-                reader.decrypt("")
-            except Exception as exc:  # noqa: BLE001 — surfaced to the instructor
-                raise ExtractionError("This PDF is password-protected.") from exc
-        pages = []
-        for index, page in enumerate(reader.pages, start=1):
-            try:
-                raw = page.extract_text() or ""
-            except Exception:  # noqa: BLE001 — one bad page must not lose the rest
-                logger.warning("Could not extract page %s", index, exc_info=True)
-                raw = ""
-            pages.append(PageText(number=index, text=normalize_whitespace(raw)))
-    except ExtractionError:
-        raise
-    except (PdfReadError, OSError, ValueError) as exc:
+        document = pdfium.PdfDocument(fileobj)
+        page_total = len(document)
+    except pdfium.PdfiumError as exc:
+        if "password" in str(exc).lower():
+            raise ExtractionError("This PDF is password-protected.") from exc
         raise ExtractionError("This file could not be read as a PDF.") from exc
+    except (OSError, ValueError) as exc:
+        raise ExtractionError("This file could not be read as a PDF.") from exc
+
+    pages = []
+    for index in range(page_total):
+        page = document[index]
+        try:
+            raw = _page_text(page)
+        except Exception:  # noqa: BLE001 — one bad page must not lose the rest
+            logger.warning("Could not extract page %s", index + 1, exc_info=True)
+            raw = ""
+        text = normalize_whitespace(raw)
+        pages.append(
+            PageText(
+                number=index + 1,
+                text=text,
+                is_image_only=_looks_image_only(page, text),
+                unmappable_chars=len(UNMAPPABLE_GLYPHS.findall(text)),
+            )
+        )
 
     if not pages:
         raise ExtractionError("This PDF has no pages.")
     return pages
+
+
+#: Characters outside any script this project handles. They appear when a PDF
+#: embeds a subsetted font whose ToUnicode table maps glyphs to arbitrary
+#: codepoints — the text is unrecoverable without OCR, so it is counted and
+#: reported rather than passed off as real content.
+UNMAPPABLE_GLYPHS = re.compile(r"[Ā-ʯͰ-Ͽ]")
+
+#: A page with content objects but essentially no letters is a picture of a
+#: page, not a page. Short real pages (a section title) clear this easily.
+MIN_MEANINGFUL_LETTERS = 8
+_NON_LETTERS = re.compile(r"[\W\d_]+", re.UNICODE)
+
+_ALEF = {"ا", "أ", "إ", "آ"}  # ا أ إ آ
+_LAM = "ل"  # ل
+
+
+def _page_text(page) -> str:
+    """Text of one page, with lam-alef ligatures put back in logical order.
+
+    PDFium reports a lam-alef ligature as its two letters in *visual* order
+    (alef then lam), both carrying the identical character box because they
+    come from one glyph. That identical box is what makes the repair safe:
+    a genuine "ال" (the definite article) is two glyphs with two boxes, and is
+    left alone. Without this, every "الاصطناعي" reads "االصطناعي".
+    """
+    textpage = page.get_textpage()
+    chars: list[list] = []
+    for i in range(textpage.count_chars()):
+        try:
+            box = textpage.get_charbox(i, loose=False)
+        except Exception:  # noqa: BLE001 — newlines and marks have no box
+            box = None
+        chars.append([textpage.get_text_range(i, 1), box])
+
+    repair_lam_alef(chars)
+    return "".join(char for char, _ in chars)
+
+
+def repair_lam_alef(chars: list[list]) -> int:
+    """Swap the two letters of every lam-alef ligature back into logical order.
+
+    `chars` is a list of `[character, charbox]` pairs in extraction order;
+    it is modified in place. Returns how many ligatures were repaired.
+
+    Two adjacent characters sharing an identical box came from a single glyph.
+    When that glyph is a lam-alef, the pair arrives as (alef, lam) and must be
+    read (lam, alef). The shared box is the whole safety of this: the definite
+    article "ال" is two glyphs with two different boxes and is never touched.
+    """
+    repaired = 0
+    for i in range(len(chars) - 1):
+        (char, box), (next_char, next_box) = chars[i], chars[i + 1]
+        if char in _ALEF and next_char == _LAM and box is not None and box == next_box:
+            chars[i][0], chars[i + 1][0] = next_char, char
+            repaired += 1
+    return repaired
+
+
+def _looks_image_only(page, text: str) -> bool:
+    """True when the page shows content but hands us no text worth reading.
+
+    The failure this catches is a slide whose body is a pasted screenshot: the
+    only extractable text is the slide number, so a naive extractor returns
+    "8" and calls it a page.
+    """
+    if len(_NON_LETTERS.sub("", text)) >= MIN_MEANINGFUL_LETTERS:
+        return False
+    try:
+        return any(obj.type in (_PDFIUM_IMAGE, _PDFIUM_PATH) for obj in page.get_objects())
+    except Exception:  # noqa: BLE001 — object inspection is best-effort
+        logger.warning("Could not inspect page objects", exc_info=True)
+        return False
+
+
+_PDFIUM_IMAGE = 3
+_PDFIUM_PATH = 2
 
 
 def extract_pptx(fileobj) -> list[PageText]:
@@ -148,6 +243,22 @@ NO_TEXT_MESSAGE = (
 )
 
 
+def _partial_text_message(image_only: int, total: int) -> str:
+    return (
+        f"{image_only} of {total} pages carry their content as images or diagrams "
+        "with no text layer, so nothing could be read from them. Text recognition "
+        "(OCR) is not part of this version. The remaining pages extracted normally."
+    )
+
+
+def _unmappable_message(count: int) -> str:
+    return (
+        f"{count} characters could not be mapped to real letters — this file embeds "
+        "fonts whose internal character tables are incomplete, which usually affects "
+        "decorative headings. Body text is unaffected."
+    )
+
+
 def ingest_source_file(source_file: SourceFile) -> SourceFile:
     """Extract `source_file` and store its pages. Never raises for bad input.
 
@@ -165,15 +276,47 @@ def ingest_source_file(source_file: SourceFile) -> SourceFile:
     with transaction.atomic():
         source_file.pages.all().delete()
         ExtractedPage.objects.bulk_create(
-            ExtractedPage(source_file=source_file, number=p.number, text=p.text) for p in pages
+            ExtractedPage(
+                source_file=source_file,
+                number=p.number,
+                text=p.text,
+                is_image_only=p.is_image_only,
+            )
+            for p in pages
         )
-        has_text = any(p.text.strip() for p in pages)
+
+        readable = [p for p in pages if p.text.strip()]
+        image_only = [p for p in pages if p.is_image_only]
+        unmappable = sum(p.unmappable_chars for p in pages)
+
+        if not readable:
+            status, detail = SourceFile.Status.NO_TEXT, NO_TEXT_MESSAGE
+        elif image_only:
+            # Some pages read, some are pictures. Saying "ready" here is what
+            # made a 43-page deck look complete when half of it was unread.
+            status = SourceFile.Status.PARTIAL_TEXT
+            detail = _partial_text_message(len(image_only), len(pages))
+        else:
+            status, detail = SourceFile.Status.READY, ""
+
+        if unmappable:
+            detail = f"{detail} {_unmappable_message(unmappable)}".strip()
+
         source_file.page_count = len(pages)
-        source_file.status = SourceFile.Status.READY if has_text else SourceFile.Status.NO_TEXT
-        source_file.status_detail = "" if has_text else NO_TEXT_MESSAGE
+        source_file.pages_without_text = len(image_only)
+        source_file.unmappable_chars = unmappable
+        source_file.status = status
+        source_file.status_detail = detail
         source_file.extracted_at = timezone.now()
         source_file.save(
-            update_fields=["page_count", "status", "status_detail", "extracted_at"]
+            update_fields=[
+                "page_count",
+                "pages_without_text",
+                "unmappable_chars",
+                "status",
+                "status_detail",
+                "extracted_at",
+            ]
         )
     return source_file
 
@@ -182,6 +325,17 @@ def _record_failure(source_file: SourceFile, status: str, detail: str) -> Source
     source_file.status = status
     source_file.status_detail = detail
     source_file.page_count = 0
+    source_file.pages_without_text = 0
+    source_file.unmappable_chars = 0
     source_file.extracted_at = timezone.now()
-    source_file.save(update_fields=["status", "status_detail", "page_count", "extracted_at"])
+    source_file.save(
+        update_fields=[
+            "status",
+            "status_detail",
+            "page_count",
+            "pages_without_text",
+            "unmappable_chars",
+            "extracted_at",
+        ]
+    )
     return source_file

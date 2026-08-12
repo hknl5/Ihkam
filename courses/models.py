@@ -89,6 +89,7 @@ class SourceFile(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Not extracted yet"
         READY = "ready", "Text extracted"
+        PARTIAL_TEXT = "partial_text", "Some pages have no text layer"
         NO_TEXT = "no_text", "No text layer"
         UNSUPPORTED = "unsupported", "Format not supported yet"
         FAILED = "failed", "Extraction failed"
@@ -113,6 +114,11 @@ class SourceFile(models.Model):
     #: Instructor-facing explanation when status is not `ready`.
     status_detail = models.TextField(blank=True)
     page_count = models.PositiveIntegerField(default=0)
+    #: Pages that carry content as images or diagrams with no text to read —
+    #: the OCR gap, counted so it is never mistaken for an empty page.
+    pages_without_text = models.PositiveIntegerField(default=0)
+    #: Characters the file's own embedded fonts could not map to real letters.
+    unmappable_chars = models.PositiveIntegerField(default=0)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     extracted_at = models.DateTimeField(null=True, blank=True)
 
@@ -134,11 +140,17 @@ class SourceFile(models.Model):
         return self.status == self.Status.READY
 
     @property
+    def has_readable_text(self) -> bool:
+        """Whether there is anything worth opening the reader for."""
+        return self.status in {self.Status.READY, self.Status.PARTIAL_TEXT}
+
+    @property
     def status_tone(self) -> str:
         """Maps to the design system's `.status--*` modifiers (§5)."""
         return {
             self.Status.READY: "ok",
             self.Status.PENDING: "candidate",
+            self.Status.PARTIAL_TEXT: "warn",
             self.Status.NO_TEXT: "warn",
             self.Status.UNSUPPORTED: "warn",
             self.Status.FAILED: "danger",
@@ -155,6 +167,10 @@ class ExtractedPage(models.Model):
     source_file = models.ForeignKey(SourceFile, on_delete=models.CASCADE, related_name="pages")
     number = models.PositiveIntegerField(help_text="1-based page number in the source document.")
     text = models.TextField(blank=True)
+    #: The page has content — a screenshot, a figure, a scan — but no text
+    #: layer. Distinct from a genuinely blank page, and from a page we simply
+    #: failed to read: this one needs OCR, which is deferred.
+    is_image_only = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["number"]

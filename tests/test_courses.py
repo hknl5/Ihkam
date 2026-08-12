@@ -22,6 +22,7 @@ from courses.services.ingest import (
     extract_pdf,
     ingest_source_file,
     normalize_whitespace,
+    repair_lam_alef,
 )
 
 PAGE_LINES = [
@@ -276,3 +277,124 @@ class DashboardTests(TestCase):
         response = self.client.get(reverse("courses:dashboard"))
         self.assertContains(response, "No courses yet")
         self.assertContains(response, "Create a course")
+
+
+class ArabicLigatureTests(TestCase):
+    """The lam-alef repair, from the real GenAI guidelines PDF.
+
+    PDFium reports the single lam-alef glyph as its two letters in visual
+    order, both with the same character box. Without the repair, every
+    "الاصطناعي" in that document read "االصطناعي".
+    """
+
+    def test_a_ligature_pair_is_put_back_into_logical_order(self):
+        box = (427.2, 175.9, 432.3, 194.7)
+        chars = [["ا", box], ["ل", box], ["ص", (417.2, 175.9, 426.2, 194.7)]]
+
+        repaired = repair_lam_alef(chars)
+
+        self.assertEqual(repaired, 1)
+        self.assertEqual("".join(c for c, _ in chars), "لاص")
+
+    def test_the_definite_article_is_left_alone(self):
+        # Two real glyphs, two different boxes — this is "ال", not a ligature.
+        chars = [
+            ["ا", (433.6, 175.9, 434.5, 194.7)],
+            ["ل", (427.2, 175.9, 432.3, 194.7)],
+            ["ذ", (420.0, 175.9, 426.0, 194.7)],
+        ]
+
+        repaired = repair_lam_alef(chars)
+
+        self.assertEqual(repaired, 0)
+        self.assertEqual("".join(c for c, _ in chars), "الذ")
+
+    def test_characters_without_boxes_are_skipped(self):
+        chars = [["ا", None], ["ل", None], ["\n", None]]
+
+        self.assertEqual(repair_lam_alef(chars), 0)
+
+    def test_alef_variants_are_repaired_too(self):
+        box = (10.0, 10.0, 20.0, 20.0)
+        for alef in ("ا", "أ", "إ", "آ"):
+            chars = [[alef, box], ["ل", box]]
+            self.assertEqual(repair_lam_alef(chars), 1)
+            self.assertEqual("".join(c for c, _ in chars), f"ل{alef}")
+
+
+def make_image_pdf(text_pages=1, image_pages=2) -> bytes:
+    """A deck like the real ch10.3.pdf: some real slides, some that are
+    screenshots with nothing but the slide number as text."""
+    from reportlab.lib.utils import ImageReader
+
+    picture = ImageReader(io.BytesIO(_png_bytes()))
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    for i in range(text_pages):
+        pdf.drawString(72, 800, f"{i + 1}")
+        pdf.drawString(72, 760, "Logical Gates and Combinatorial Circuits")
+        pdf.drawString(72, 730, "In circuitry theory, NOT, AND and OR gates are the basic gates.")
+        pdf.showPage()
+    for i in range(image_pages):
+        pdf.drawString(72, 800, f"{text_pages + i + 1}")  # only the slide number
+        pdf.drawImage(picture, 72, 300, width=400, height=300)
+        pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
+def _png_bytes() -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 30), (200, 200, 200)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class ImageOnlyPageTests(TestCase):
+    """The reported bug: pages whose content is a screenshot came back as the
+    slide number and were reported as fully extracted."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("nadia", password="quiet-precision-42")
+        self.client.login(username="nadia", password="quiet-precision-42")
+        self.course = Course.objects.create(instructor=self.user, name="Discrete Maths", code="CS210")
+        self.url = reverse("courses:detail", args=[self.course.pk])
+
+    def test_a_screenshot_page_is_flagged_not_passed_off_as_extracted(self):
+        self.client.post(self.url, {"file": upload("deck.pdf", make_image_pdf())})
+        source_file = SourceFile.objects.get()
+
+        self.assertEqual(source_file.status, SourceFile.Status.PARTIAL_TEXT)
+        self.assertEqual(source_file.page_count, 3)
+        self.assertEqual(source_file.pages_without_text, 2)
+
+        pages = list(source_file.pages.all())
+        self.assertFalse(pages[0].is_image_only)  # a real slide
+        self.assertTrue(pages[1].is_image_only)
+        self.assertTrue(pages[2].is_image_only)
+
+    def test_the_reader_says_the_page_needs_ocr(self):
+        self.client.post(self.url, {"file": upload("deck.pdf", make_image_pdf())})
+        source_file = SourceFile.objects.get()
+
+        response = self.client.get(source_file.get_absolute_url(), {"page": 2})
+
+        self.assertContains(response, "no text layer")
+        self.assertContains(response, "OCR")
+
+    def test_pages_with_real_text_and_pictures_are_not_flagged(self):
+        self.client.post(
+            self.url, {"file": upload("all-good.pdf", make_image_pdf(text_pages=2, image_pages=0))}
+        )
+        source_file = SourceFile.objects.get()
+
+        self.assertEqual(source_file.status, SourceFile.Status.READY)
+        self.assertEqual(source_file.pages_without_text, 0)
+
+    def test_the_upload_message_names_what_was_missed(self):
+        response = self.client.post(
+            self.url, {"file": upload("deck.pdf", make_image_pdf())}, follow=True
+        )
+        self.assertContains(response, "1 of 3 pages extracted")
