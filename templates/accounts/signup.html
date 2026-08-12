@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Create an account — إحكام{% endblock %}
+
+{% block content %}
+<div class="card card--narrow">
+  <div class="page-head">
+    <h1>Create your instructor account</h1>
+    <p>You keep the final say on every question إحكام drafts.</p>
+  </div>
+
+  {% if form.non_field_errors %}
+    <div class="banner banner--danger" role="alert">
+      <span class="banner__label">Check your details.</span>
+      <span>{% for error in form.non_field_errors %}{{ error }} {% endfor %}</span>
+    </div>
+  {% endif %}
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% for field in form %}
+      {% include "partials/field.html" with field=field %}
+    {% endfor %}
+    <div class="action-bar">
+      <button type="submit" class="btn btn--primary">Create account</button>
+      <a class="btn btn--ghost" href="{% url 'accounts:login' %}">I already have one</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

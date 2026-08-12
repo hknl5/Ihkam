@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Log in — إحكام{% endblock %}
+
+{% block content %}
+<div class="card card--narrow">
+  <div class="page-head">
+    <h1>Log in</h1>
+    <p>Pick up where you left off with your courses and exams.</p>
+  </div>
+
+  {% if form.non_field_errors %}
+    <div class="banner banner--danger" role="alert">
+      <span class="banner__label">Check your details.</span>
+      <span>{% for error in form.non_field_errors %}{{ error }} {% endfor %}</span>
+    </div>
+  {% endif %}
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% for field in form %}
+      {% include "partials/field.html" with field=field %}
+    {% endfor %}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <div class="action-bar">
+      <button type="submit" class="btn btn--primary">Log in</button>
+      <a class="btn btn--ghost" href="{% url 'accounts:signup' %}">Create an account</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

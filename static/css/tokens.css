@@ -1,0 +1,60 @@
+/* إحكام design system — tokens (§5 of the build plan).
+   Direction: "quiet precision". Ink on warm paper, one teal accent reserved
+   for the instructor's decision. Every later screen inherits from here. */
+
+:root {
+  /* Surfaces — warm-neutral paper, not stark white */
+  --surface-page:   #F7F6F3;
+  --surface-card:   #FFFFFF;
+  --surface-sunken: #EFEDE8;
+
+  /* Ink */
+  --ink-900: #1C1D1B;  /* primary text */
+  --ink-600: #4B4D48;  /* secondary text — AA on all surfaces */
+  --ink-400: #8A8C85;  /* rules, icons, disabled. NOT for body/caption text:
+                          it is below AA on paper. Captions use --ink-600. */
+  --hairline: #DEDBD3;
+
+  /* Accent — the decision color. Primary actions only. */
+  --accent-700: #0E5E5A;
+  --accent-500: #15807A;
+  --accent-100: #E2F0EE;
+
+  /* Semantic status — status only, never decoration.
+     Always paired with an icon or word (color is never the sole signal). */
+  --ok-600:     #2F7A43;
+  --warn-600:   #A66A00;
+  --danger-600: #B23A2E;
+  --info-600:   #2B5FA6;
+
+  /* Type */
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "IBM Plex Sans", "IBM Plex Sans Arabic", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Type scale (1.25 ratio) */
+  --fs-caption: 0.8rem;
+  --fs-body: 1rem;
+  --fs-lead: 1.25rem;
+  --fs-h3: 1.563rem;
+  --fs-h2: 1.953rem;
+  --fs-h1: 2.441rem;
+
+  --lh-tight: 1.2;
+  --lh-read: 1.6;
+
+  /* Spacing */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+
+  /* Radius + elevation — paper, not floating glass */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 1px 2px rgba(28, 29, 27, .06), 0 2px 8px rgba(28, 29, 27, .04);
+
+  /* Layout */
+  --measure: 68ch;      /* reading measure for long content */
+  --shell-max: 1120px;
+  --transition: 140ms ease;  /* quality floor: ≤150ms, never essential */
+}

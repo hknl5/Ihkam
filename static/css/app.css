@@ -1,0 +1,351 @@
+/* إحكام design system — base + components (§5).
+   Layout is written with logical properties throughout, so setting dir="rtl"
+   on <html> mirrors every screen without a second stylesheet. */
+
+/* ---------- Reset ---------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body, h1, h2, h3, h4, p, figure, blockquote, dl, dd, ul, ol, fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+ul[class], ol[class] { list-style: none; }
+
+img, svg { max-width: 100%; display: block; }
+
+input, button, textarea, select { font: inherit; color: inherit; }
+
+/* ---------- Base ---------- */
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-read);
+  color: var(--ink-900);
+  background: var(--surface-page);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: var(--fs-h1); }
+h2 { font-size: var(--fs-h2); }
+h3 { font-size: var(--fs-h3); }
+
+/* Arabic never renders in the Latin display serif — Plex Arabic carries it. */
+:lang(ar) h1, :lang(ar) h2, :lang(ar) h3, [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3 {
+  font-family: "IBM Plex Sans Arabic", var(--font-body);
+  letter-spacing: normal;
+}
+
+p { max-width: var(--measure); }
+
+a { color: var(--accent-700); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { color: var(--accent-500); }
+
+.lead { font-size: var(--fs-lead); line-height: var(--lh-read); }
+.caption { font-size: var(--fs-caption); color: var(--ink-600); }
+
+/* Numbers, scores, IDs and Latin technical terms stay LTR inside RTL text. */
+.num, code, kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Quality floor ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.skip-link {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-card);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  transform: translateY(-200%);
+  z-index: 20;
+}
+.skip-link:focus-visible { transform: translateY(0); }
+
+/* ---------- Shell ---------- */
+
+.shell {
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+}
+
+.site-header {
+  background: var(--surface-card);
+  border-block-end: 1px solid var(--hairline);
+}
+
+.site-header__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 64px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: var(--fs-h3);
+  color: var(--ink-900);
+  text-decoration: none;
+  margin-inline-end: auto;
+}
+.brand:hover { color: var(--ink-900); }
+.brand__mark { color: var(--accent-700); }
+
+.site-nav { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.site-nav a { color: var(--ink-600); text-decoration: none; }
+.site-nav a:hover { color: var(--ink-900); text-decoration: underline; }
+.site-nav .who { color: var(--ink-600); font-size: var(--fs-caption); }
+
+main { flex: 1; padding-block: var(--space-8) var(--space-12); }
+
+.page-head { margin-block-end: var(--space-8); }
+.page-head p { color: var(--ink-600); margin-block-start: var(--space-2); }
+
+.site-footer {
+  border-block-start: 1px solid var(--hairline);
+  padding-block: var(--space-6);
+  color: var(--ink-600);
+  font-size: var(--fs-caption);
+}
+
+/* ---------- Card ---------- */
+
+.card {
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-6);
+}
+
+.card--narrow { max-width: 30rem; margin-inline: auto; }
+
+/* Signature element: the Decision Rail. A question card's state, at a glance.
+   Always accompanied by a status label — color is never the only signal. */
+.card--rail { border-inline-start: 4px solid var(--ink-400); }
+.card--rail.is-approved { border-inline-start-color: var(--ok-600); }
+.card--rail.is-attention { border-inline-start-color: var(--warn-600); }
+.card--rail.is-rejected { border-inline-start-color: var(--danger-600); }
+
+/* ---------- Status ---------- */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+}
+.status::before { content: "●"; font-size: 0.7em; line-height: 1; }
+.status--candidate { color: var(--ink-600); }
+.status--ok { color: var(--ok-600); }
+.status--warn { color: var(--warn-600); }
+.status--danger { color: var(--danger-600); }
+.status--info { color: var(--info-600); }
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: none;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+
+/* Exactly one primary per action bar — it is the decision. */
+.btn--primary { background: var(--accent-700); color: #fff; }
+.btn--primary:hover { background: var(--accent-500); color: #fff; }
+
+.btn--secondary {
+  background: var(--surface-card);
+  border-color: var(--hairline);
+  color: var(--ink-900);
+}
+.btn--secondary:hover { background: var(--surface-sunken); color: var(--ink-900); }
+
+.btn--ghost { color: var(--ink-600); }
+.btn--ghost:hover { background: var(--surface-sunken); color: var(--ink-900); }
+
+.btn--danger { color: var(--danger-600); border-color: var(--hairline); background: var(--surface-card); }
+
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+.action-bar--end { justify-content: flex-end; }
+
+/* ---------- Forms ---------- */
+
+.field { margin-block-end: var(--space-6); }
+.field > label {
+  display: block;
+  font-weight: 500;
+  margin-block-end: var(--space-2);
+}
+
+.field input[type="text"],
+.field input[type="email"],
+.field input[type="password"],
+.field input[type="number"],
+.field select,
+.field textarea {
+  width: 100%;
+  padding: var(--space-3);
+  min-height: 44px;
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition);
+}
+.field input:hover, .field select:hover, .field textarea:hover { border-color: var(--ink-400); }
+.field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
+  border-color: var(--accent-500);
+}
+
+.field .helptext, .field .errorlist {
+  display: block;
+  font-size: var(--fs-caption);
+  margin-block-start: var(--space-2);
+}
+.field .helptext { color: var(--ink-600); }
+.field .helptext ul { padding-inline-start: var(--space-4); list-style: disc; }
+.field .errorlist { color: var(--danger-600); padding-inline-start: var(--space-4); }
+.field.has-error input { border-color: var(--danger-600); }
+
+/* ---------- Banner ---------- */
+
+.banner {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-card);
+  margin-block-end: var(--space-6);
+  border-inline-start: 4px solid var(--info-600);
+}
+.banner__label { font-weight: 600; }
+.banner--ok { border-inline-start-color: var(--ok-600); }
+.banner--warn { border-inline-start-color: var(--warn-600); }
+.banner--danger { border-inline-start-color: var(--danger-600); }
+
+/* ---------- Empty state — an invitation, not an apology ---------- */
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-12) var(--space-6);
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.empty-state h2 { font-size: var(--fs-h3); margin-block-end: var(--space-3); }
+.empty-state p { color: var(--ink-600); margin-inline: auto; margin-block-end: var(--space-6); }
+
+/* ---------- Table — scrolls horizontally on small screens ---------- */
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--surface-card); }
+
+table.data { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.data th, table.data td {
+  padding: var(--space-3) var(--space-4);
+  text-align: start;
+  border-block-end: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+table.data thead th {
+  position: sticky;
+  inset-block-start: 0;
+  background: var(--surface-sunken);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--ink-600);
+}
+table.data td.num { font-family: var(--font-mono); }
+
+/* ---------- Stepper ---------- */
+
+.stepper { display: flex; flex-wrap: wrap; gap: var(--space-4); font-size: var(--fs-caption); }
+.stepper li { color: var(--ink-600); }
+.stepper .is-done { color: var(--ok-600); }
+.stepper .is-current { color: var(--accent-700); font-weight: 600; }
+
+/* ---------- Utilities ---------- */
+
+.stack > * + * { margin-block-start: var(--space-4); }
+.stack--tight > * + * { margin-block-start: var(--space-2); }
+.stack--loose > * + * { margin-block-start: var(--space-8); }
+.grid-cards {
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 40rem) {
+  :root { --fs-h1: 1.953rem; --fs-h2: 1.563rem; --fs-h3: 1.25rem; }
+  main { padding-block: var(--space-6) var(--space-8); }
+  .card { padding: var(--space-4); }
+  .action-bar .btn { flex: 1 1 auto; }
+}

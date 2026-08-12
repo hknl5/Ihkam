@@ -1,0 +1,11 @@
+{# One form field, styled by the design system. Include with: {% include "partials/field.html" with field=form.username %} #}
+<div class="field{% if field.errors %} has-error{% endif %}">
+  <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+  {{ field }}
+  {% if field.help_text %}<span class="helptext">{{ field.help_text|safe }}</span>{% endif %}
+  {% if field.errors %}
+    <ul class="errorlist">
+      {% for error in field.errors %}<li>{{ error }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+</div>

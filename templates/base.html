@@ -1,0 +1,61 @@
+{% load static %}<!DOCTYPE html>
+<html lang="{% block lang %}en{% endblock %}" dir="{% block dir %}ltr{% endblock %}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}إحكام — Ihkam{% endblock %}</title>
+  <meta name="description" content="{% block description %}Intelligent exam drafting and review for instructors.{% endblock %}">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+  <link rel="stylesheet" href="{% static 'css/tokens.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="shell site-header__inner">
+      <a class="brand" href="{% url 'accounts:dashboard' %}">
+        <span class="brand__mark">إحكام</span> Ihkam
+      </a>
+      <nav class="site-nav" aria-label="Account">
+        {% if user.is_authenticated %}
+          <span class="who">{{ user.get_full_name|default:user.username }}</span>
+          <form method="post" action="{% url 'accounts:logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--ghost">Log out</button>
+          </form>
+        {% else %}
+          <a href="{% url 'accounts:login' %}">Log in</a>
+          <a class="btn btn--secondary" href="{% url 'accounts:signup' %}">Create account</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div class="shell">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="banner banner--{{ message.tags|default:'info' }}" role="status">
+            <span>{{ message }}</span>
+          </div>
+        {% endfor %}
+      {% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      إحكام prepares the draft and surfaces imbalances. The final decision always belongs to the instructor.
+    </div>
+  </footer>
+
+  {% block body_extra %}{% endblock %}
+</body>
+</html>

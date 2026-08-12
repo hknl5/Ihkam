@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}My courses — إحكام{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>My courses</h1>
+  <p>Every exam starts from a course and the material you taught in it.</p>
+</div>
+
+{% if courses %}
+  <div class="grid-cards">
+    {% for course in courses %}
+      <article class="card">
+        <h2>{{ course.name }}</h2>
+      </article>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <h2>No courses yet</h2>
+    <p>Create a course to upload lecture material and start drafting an exam.</p>
+    <div class="action-bar" style="justify-content: center;">
+      <button type="button" class="btn btn--primary" disabled>New course</button>
+    </div>
+    <p class="caption">Course creation and content upload arrive in the next milestone (M1).</p>
+  </div>
+{% endif %}
+{% endblock %}

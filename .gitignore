@@ -1,0 +1,35 @@
+# Secrets — never commit. .env.example is the template that is committed.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# Environments (uv manages .venv; the lock file IS committed)
+.venv/
+venv/
+env/
+
+# Django runtime / generated
+staticfiles/
+media/
+*.sqlite3
+db.sqlite3
+*.log
+local_settings.py
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
