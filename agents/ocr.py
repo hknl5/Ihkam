@@ -117,6 +117,11 @@ def _user_prompt(language_hint: str) -> str:
 #: retryDelay is preferred; otherwise back off exponentially.
 _RETRY_DELAY_PATTERN = re.compile(r"retryDelay['\"]?[:=]\s*['\"]?(\d+(?:\.\d+)?)")
 _RATE_LIMIT_MARKERS = ("429", "RESOURCE_EXHAUSTED", "rate limit", "quota")
+#: Transient server-side failures. Measured on a real 30-page Arabic file: one
+#: page came back "503 UNAVAILABLE — deadline expired" and was left unread,
+#: while the same page read fine moments later. Worth the same retry a rate
+#: limit gets; a page lost to a hiccup is a page the instructor cannot use.
+_TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "504", "DEADLINE_EXCEEDED", "500", "INTERNAL")
 #: A *daily* quota does not come back in a minute. Waiting for one just makes
 #: an upload hang for the full retry budget and still fail — measured: 12
 #: minutes of waiting on an exhausted free-tier key.
@@ -136,6 +141,9 @@ def _rate_limit_delay(exc: Exception, attempt: int = 1) -> float | None:
     a moment later. A per-day quota is not — that is reported immediately.
     """
     message = str(exc)
+    if any(marker in message for marker in _TRANSIENT_MARKERS):
+        # No server-suggested delay to read here; back off and come back.
+        return min(2.0**attempt + random.uniform(0, 1), MAX_RETRY_DELAY_SECONDS)
     if not any(marker in message for marker in _RATE_LIMIT_MARKERS):
         return None
     if any(marker in message for marker in _DAILY_QUOTA_MARKERS):

@@ -46,7 +46,7 @@
                     (<span class="num">{{ source_file.pages_from_ocr }}</span> read by OCR)
                   {% endif %}
                   {% if source_file.pages_without_text %}
-                    (<span class="num">{{ source_file.pages_without_text }}</span> without text)
+                    (<span class="num">{{ source_file.pages_without_text }}</span> not read in full)
                   {% endif %} ·
                   uploaded {{ source_file.uploaded_at|date:"j M Y, H:i" }}
                 </p>
@@ -55,6 +55,19 @@
                 </p>
                 {% if source_file.status_detail %}
                   <p class="caption">{{ source_file.status_detail }}</p>
+                {% endif %}
+                {% if source_file.ocr_breakdown %}
+                  <ul class="caption">
+                    {% for row in source_file.ocr_breakdown %}
+                      <li>
+                        {{ row.label }}:
+                        <span class="num">{{ row.read }}</span> re-read by OCR{% if row.unread %},
+                        <span class="num">{{ row.unread }}</span> still unread{% endif %}
+                        (page{{ row.pages|length|pluralize }}
+                        {{ row.pages|join:", " }})
+                      </li>
+                    {% endfor %}
+                  </ul>
                 {% endif %}
               </div>
               <div class="action-bar">

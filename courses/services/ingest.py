@@ -17,7 +17,7 @@ import re
 import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from django.conf import settings
 from django.db import transaction
@@ -46,6 +46,9 @@ class PageText:
     #: Characters the PDF's own font tables could not map to real letters.
     #: A defective embedded ToUnicode CMap, not something extraction can fix.
     unmappable_chars: int = 0
+    #: Why this page needs re-reading by OCR, or "" when extraction read it in
+    #: full. One of `ExtractedPage.OCRReason`.
+    ocr_reason: str = ""
 
 
 # --- Normalisation ----------------------------------------------------------
@@ -112,12 +115,15 @@ def extract_pdf(fileobj) -> list[PageText]:
             logger.warning("Could not extract page %s", index + 1, exc_info=True)
             raw = ""
         text = normalize_whitespace(raw)
+        signals = measure_page(page, text)
+        reason = classify_ocr_need(signals)
         pages.append(
             PageText(
                 number=index + 1,
                 text=text,
-                is_image_only=_looks_image_only(page, text),
-                unmappable_chars=len(UNMAPPABLE_GLYPHS.findall(text)),
+                is_image_only=(reason == ExtractedPage.OCRReason.IMAGE_ONLY),
+                unmappable_chars=signals.unmappable,
+                ocr_reason=reason,
             )
         )
 
@@ -130,7 +136,14 @@ def extract_pdf(fileobj) -> list[PageText]:
 #: embeds a subsetted font whose ToUnicode table maps glyphs to arbitrary
 #: codepoints — the text is unrecoverable without OCR, so it is counted and
 #: reported rather than passed off as real content.
-UNMAPPABLE_GLYPHS = re.compile(r"[Ā-ʯͰ-Ͽ]")
+#:
+#: Latin Extended-A/B and IPA only. Greek was here too, and had to come out:
+#: on ch10.3.pdf it matched 57 real characters — the α, β, γ, δ of ordinary
+#: maths notation — which both misreported a clean file as having broken fonts
+#: and, now that this count decides whether to re-read a page, would have sent
+#: every maths page for needless OCR. The defective Arabic fonts this catches
+#: map into Latin Extended exclusively (measured: 427 chars, none Greek).
+UNMAPPABLE_GLYPHS = re.compile(r"[Ā-ʯ]")
 
 #: A page with content objects but essentially no letters is a picture of a
 #: page, not a page. Short real pages (a section title) clear this easily.
@@ -183,24 +196,118 @@ def repair_lam_alef(chars: list[list]) -> int:
     return repaired
 
 
-def _looks_image_only(page, text: str) -> bool:
-    """True when the page shows content but hands us no text worth reading.
-
-    The failure this catches is a slide whose body is a pasted screenshot: the
-    only extractable text is the slide number, so a naive extractor returns
-    "8" and calls it a page.
-    """
-    if len(_NON_LETTERS.sub("", text)) >= MIN_MEANINGFUL_LETTERS:
-        return False
-    try:
-        return any(obj.type in (_PDFIUM_IMAGE, _PDFIUM_PATH) for obj in page.get_objects())
-    except Exception:  # noqa: BLE001 — object inspection is best-effort
-        logger.warning("Could not inspect page objects", exc_info=True)
-        return False
-
-
 _PDFIUM_IMAGE = 3
 _PDFIUM_PATH = 2
+
+#: Cells per axis when measuring how much of a page its images cover. A grid
+#: is used rather than summing areas because slide images overlap, and summing
+#: overlapping boxes reports coverage above 100% — which would re-read pages
+#: that are perfectly readable.
+_COVERAGE_GRID = 60
+
+
+@dataclass(frozen=True)
+class PageSignals:
+    """What is measurable about one page, before deciding whether to trust it."""
+
+    letters: int
+    total_chars: int
+    unmappable: int
+    #: Fraction of the page covered by images, 0.0-1.0.
+    image_coverage: float
+    #: The page draws something — an image or vector art — as opposed to being
+    #: genuinely blank.
+    has_content: bool
+
+    @property
+    def unmappable_ratio(self) -> float:
+        return self.unmappable / self.total_chars if self.total_chars else 0.0
+
+
+def _image_coverage(boxes, width: float, height: float) -> float:
+    """Fraction of the page the image boxes cover, counting overlaps once."""
+    if not boxes:
+        return 0.0
+    covered = set()
+    for left, bottom, right, top in boxes:
+        first_col = int(_COVERAGE_GRID * max(left, 0.0) / width)
+        last_col = int(_COVERAGE_GRID * min(right, width) / width)
+        first_row = int(_COVERAGE_GRID * max(bottom, 0.0) / height)
+        last_row = int(_COVERAGE_GRID * min(top, height) / height)
+        for col in range(first_col, min(last_col + 1, _COVERAGE_GRID)):
+            for row in range(first_row, min(last_row + 1, _COVERAGE_GRID)):
+                covered.add((col, row))
+    return len(covered) / (_COVERAGE_GRID * _COVERAGE_GRID)
+
+
+def measure_page(page, text: str) -> PageSignals:
+    """Measure one page's text against what it actually draws.
+
+    Image geometry comes from the objects' own bounds, and nested objects are
+    walked (`max_depth`): on the real slide decks every body image sits inside
+    a form XObject, so a shallow scan finds no images at all.
+    """
+    width = max(page.get_width(), 1.0)
+    height = max(page.get_height(), 1.0)
+    boxes, has_content = [], False
+    try:
+        for obj in page.get_objects(max_depth=_OBJECT_DEPTH):
+            if obj.type not in (_PDFIUM_IMAGE, _PDFIUM_PATH):
+                continue
+            has_content = True
+            if obj.type != _PDFIUM_IMAGE:
+                continue
+            try:
+                boxes.append(obj.get_bounds())
+            except Exception:  # noqa: BLE001 — an unplaceable image still counts
+                logger.debug("Could not measure an image's bounds", exc_info=True)
+    except Exception:  # noqa: BLE001 — object inspection is best-effort
+        logger.warning("Could not inspect page objects", exc_info=True)
+
+    return PageSignals(
+        letters=len(_NON_LETTERS.sub("", text)),
+        total_chars=len(text),
+        unmappable=len(UNMAPPABLE_GLYPHS.findall(text)),
+        image_coverage=_image_coverage(boxes, width, height),
+        has_content=has_content,
+    )
+
+
+#: How deep to walk form XObjects looking for images. Real decks nest body
+#: images one or two levels down; deeper than this is pointless.
+_OBJECT_DEPTH = 6
+
+
+def classify_ocr_need(signals: PageSignals) -> str:
+    """Which of the three incomplete-page shapes this is, or "" if none.
+
+    All three exist because a little extractable text is not proof that a page
+    was read. Thresholds and the pages that set them are in `config/settings.py`.
+
+    The order is deliberate: a page with nothing readable is image-only even
+    when its fonts are also broken, and the reason recorded is the one that
+    describes the page best.
+    """
+    reason = ExtractedPage.OCRReason
+    if signals.letters < MIN_MEANINGFUL_LETTERS:
+        # Nothing worth reading. Only a page that draws something is a missed
+        # page; a genuinely blank one is blank, and stays that way.
+        return reason.IMAGE_ONLY if signals.has_content else ""
+    if signals.letters < _setting("OCR_MIXED_MAX_LETTERS", 80) and signals.image_coverage >= _setting(
+        "OCR_MIXED_MIN_IMAGE_COVERAGE", 0.20
+    ):
+        # A title reads; the body is a picture.
+        return reason.MIXED
+    if signals.unmappable >= _setting("OCR_DEFECTIVE_MIN_CHARS", 8) and (
+        signals.unmappable_ratio >= _setting("OCR_DEFECTIVE_MIN_RATIO", 0.005)
+    ):
+        # The text layer is complete but partly unreadable junk.
+        return reason.DEFECTIVE_FONT
+    return ""
+
+
+def _setting(name: str, default):
+    return getattr(settings, name, default)
 
 
 def render_page_png(fileobj, number: int, width: int | None = None) -> bytes:
@@ -266,17 +373,18 @@ def extract_pages(fileobj, kind: str) -> list[PageText]:
 # --- Persistence ------------------------------------------------------------
 
 NO_TEXT_MESSAGE = (
-    "No text layer found — this looks like a scanned or image-only document. "
-    "Text recognition (OCR) is not part of this version, so please upload a "
-    "text-based PDF for now."
+    "No text layer found — this looks like a scanned or image-only document, and "
+    "text recognition (OCR) could not read it either. Nothing readable was stored "
+    "rather than storing something that is not really there."
 )
 
 
-def _partial_text_message(image_only: int, total: int) -> str:
+def _partial_text_message(unread: int, total: int) -> str:
     return (
-        f"{image_only} of {total} pages carry their content as images or diagrams "
-        "with no text layer, so nothing could be read from them. Text recognition "
-        "(OCR) is not part of this version. The remaining pages extracted normally."
+        f"{unread} of {total} pages could not be read in full — their content sits "
+        "in images, or their embedded fonts do not map to real letters — and text "
+        "recognition (OCR) did not recover them either. The remaining pages read "
+        "normally."
     )
 
 
@@ -304,8 +412,35 @@ class OCRRun:
     read: int = 0
     still_unreadable: int = 0
     skipped_over_cap: int = 0
+    #: Pages where the transcription looked truncated, so the text layer was
+    #: kept instead. Counted separately: nothing was lost, but nothing was
+    #: fixed either.
+    kept_text_layer: int = 0
+    #: `OCRReason` → pages read, so the file can say *why* it re-read pages.
+    reasons_read: dict = field(default_factory=dict)
     engine: str = ""
     error: str = ""
+
+
+def _looks_truncated(transcription: str, page: ExtractedPage) -> bool:
+    """True when a transcription is too short to be replacing the page's text.
+
+    Only a defective-font page can trip this, and only it should: its text
+    layer is complete apart from the junk, so a half-length transcription means
+    something went wrong and replacing it would lose real content.
+
+    An image-only or mixed page is the opposite case — its text layer is a page
+    number and maybe a title, known to be a fragment. A short transcription of
+    one of those is not evidence of failure, and preferring the fragment would
+    keep exactly the gap this all exists to close.
+    """
+    if page.ocr_reason != ExtractedPage.OCRReason.DEFECTIVE_FONT:
+        return False
+    had = len(_NON_LETTERS.sub("", page.text))
+    if not had:
+        return False
+    got = len(_NON_LETTERS.sub("", transcription))
+    return got < had * _setting("OCR_MIN_KEEP_RATIO", 0.6)
 
 
 def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=None) -> SourceFile:
@@ -335,6 +470,7 @@ def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=No
                 number=p.number,
                 text=p.text,
                 is_image_only=p.is_image_only,
+                ocr_reason=p.ocr_reason,
                 source=ExtractedPage.Source.TEXT_LAYER,
             )
             for p in pages
@@ -349,24 +485,28 @@ def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=No
 
     if run_ocr is None:
         run_ocr = getattr(settings, "OCR_ENABLED", False)
-    run = ocr_image_only_pages(source_file, ocr_provider) if run_ocr else OCRRun()
+    run = ocr_pages_needing_it(source_file, ocr_provider) if run_ocr else OCRRun()
 
     return _finalize_extraction(source_file, run)
 
 
-def ocr_image_only_pages(source_file: SourceFile, provider=None) -> OCRRun:
-    """Transcribe every page of `source_file` that has no text layer.
+def ocr_pages_needing_it(source_file: SourceFile, provider=None) -> OCRRun:
+    """Re-read every page extraction could not be trusted to have read in full.
+
+    That is all three shapes of incomplete page — no text layer at all, a text
+    layer covering only the title, and a text layer of font junk — chosen by
+    `classify_ocr_need` at extraction time and recorded on each page.
 
     One page per request — batching pages into a single call measurably
     degrades transcription quality, so concurrency is used only to shorten the
     total wait, never to change what is asked of the model.
 
-    A page whose transcription comes back empty keeps its `is_image_only`
-    flag: a blank result is reported as unread, never stored as read.
+    A page whose transcription comes back empty keeps whatever it had: a blank
+    result is reported as unread, never stored as read.
     """
     from agents.ocr import OCRError, get_ocr_provider  # the seam; see agents/ocr.py
 
-    pending = list(source_file.pages.filter(is_image_only=True).order_by("number"))
+    pending = list(source_file.pages.exclude(ocr_reason="").order_by("number"))
     if not pending:
         return OCRRun()
 
@@ -409,15 +549,32 @@ def ocr_image_only_pages(source_file: SourceFile, provider=None) -> OCRRun:
                 transcriptions[number] = text
 
     read = 0
+    kept_text_layer = 0
+    reasons_read: dict[str, int] = {}
     with transaction.atomic():
         for page in targets:
             text = transcriptions.get(page.number, "")
             if not text:
                 continue  # stays flagged — an unread page is not a blank page
+            if _looks_truncated(text, page):
+                # The page keeps its text layer. Replacing a full page of text
+                # with half a transcription would lose content silently, which
+                # is worse than a mangled heading.
+                logger.warning(
+                    "OCR of page %s came back much shorter than its text layer; "
+                    "keeping the text layer",
+                    page.number,
+                )
+                kept_text_layer += 1
+                continue
+            # One source per page: the transcription replaces the text layer
+            # outright rather than being merged into it, so nothing can be
+            # duplicated or half-dropped.
             page.text = text
             page.source = ExtractedPage.Source.OCR
             page.is_image_only = False
             page.save(update_fields=["text", "source", "is_image_only"])
+            reasons_read[page.ocr_reason] = reasons_read.get(page.ocr_reason, 0) + 1
             read += 1
 
         source_file.pages_from_ocr = read
@@ -429,6 +586,8 @@ def ocr_image_only_pages(source_file: SourceFile, provider=None) -> OCRRun:
         read=read,
         still_unreadable=len(targets) - read,
         skipped_over_cap=len(skipped),
+        kept_text_layer=kept_text_layer,
+        reasons_read=reasons_read,
         engine=engine,
         error=(
             "the OCR provider's daily quota ran out part-way through"
@@ -464,20 +623,31 @@ def _finalize_extraction(source_file: SourceFile, run: OCRRun) -> SourceFile:
     pages = list(source_file.pages.all())
     readable = [p for p in pages if p.text.strip() and not p.is_image_only]
     image_only = [p for p in pages if p.is_image_only]
+    # Flagged at extraction and not recovered since: still not read in full.
+    # A mixed or defective-font page belongs here too — it has *some* text, and
+    # counting it as readable is the dishonesty this work set out to remove.
+    unread = [p for p in pages if p.ocr_reason and not p.is_from_ocr]
 
     if not readable:
         status, detail = SourceFile.Status.NO_TEXT, NO_TEXT_MESSAGE
-    elif image_only:
+    elif unread:
         status = SourceFile.Status.PARTIAL_TEXT
-        detail = _partial_text_message(len(image_only), len(pages))
+        detail = _partial_text_message(len(unread), len(pages))
     else:
         status, detail = SourceFile.Status.READY, ""
 
     notes = [detail]
     if run.read:
         notes.append(
-            f"{run.read} of them were read by OCR ({run.engine}); that text is a "
-            "model transcription, not a text layer."
+            f"{run.read} page{'s' if run.read != 1 else ''} "
+            f"({_reasons_phrase(run.reasons_read)}) "
+            f"were re-read by OCR ({run.engine}); that text is a model "
+            "transcription, not a text layer."
+        )
+    if run.kept_text_layer:
+        notes.append(
+            f"{run.kept_text_layer} page(s) kept their original text because the "
+            "transcription came back suspiciously short."
         )
     if run.skipped_over_cap:
         notes.append(_over_cap_message(run.skipped_over_cap, settings.OCR_MAX_PAGES_PER_FILE))
@@ -487,22 +657,42 @@ def _finalize_extraction(source_file: SourceFile, run: OCRRun) -> SourceFile:
             if run.read
             else f"OCR did not run: {run.error}"
         )
+
+    # Recounted from what is stored now, not from what extraction first saw:
+    # OCR replaces the junk with real letters, and the count has to show that.
+    source_file.unmappable_chars = sum(len(UNMAPPABLE_GLYPHS.findall(p.text)) for p in pages)
     if source_file.unmappable_chars:
         notes.append(_unmappable_message(source_file.unmappable_chars))
 
-    source_file.pages_without_text = len(image_only)
+    source_file.pages_without_text = len(unread)
     source_file.status = status
     source_file.status_detail = " ".join(n for n in notes if n).strip()
     source_file.extracted_at = timezone.now()
     source_file.save(
         update_fields=[
             "pages_without_text",
+            "unmappable_chars",
             "status",
             "status_detail",
             "extracted_at",
         ]
     )
     return source_file
+
+
+def _reasons_phrase(reasons_read: dict) -> str:
+    """"3 image-only, 2 mixed" — why the OCR'd pages needed OCR."""
+    words = {
+        ExtractedPage.OCRReason.IMAGE_ONLY: "no text layer",
+        ExtractedPage.OCRReason.MIXED: "body content in an image",
+        ExtractedPage.OCRReason.DEFECTIVE_FONT: "defective embedded fonts",
+    }
+    parts = [
+        f"{count} with {words.get(reason, reason)}"
+        for reason, count in sorted(reasons_read.items())
+        if count
+    ]
+    return ", ".join(parts)
 
 
 def _record_failure(source_file: SourceFile, status: str, detail: str) -> SourceFile:

@@ -110,6 +110,22 @@ class RateLimitTests(SimpleTestCase):
 
         self.assertIsNone(_rate_limit_delay(Exception("400 INVALID_ARGUMENT")))
 
+    def test_a_transient_server_error_is_retried(self):
+        # Seen on a real file: one page of thirty came back 503 and was lost,
+        # though it read fine moments later.
+        from agents.ocr import _rate_limit_delay
+
+        exc = Exception(
+            "503 UNAVAILABLE. {'error': {'code': 503, 'message': "
+            "'Deadline expired before operation could complete.'}}"
+        )
+        self.assertGreater(_rate_limit_delay(exc, attempt=1), 1.0)
+
+    def test_a_transient_error_is_not_mistaken_for_a_spent_quota(self):
+        from agents.ocr import _is_daily_quota
+
+        self.assertFalse(_is_daily_quota(Exception("503 UNAVAILABLE")))
+
     def test_a_rate_limit_without_a_stated_delay_backs_off(self):
         from agents.ocr import MAX_RETRY_DELAY_SECONDS, _rate_limit_delay
 

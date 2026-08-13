@@ -38,8 +38,8 @@
       </p>
       {% if extracted_page.is_from_ocr %}
         <p class="status status--info">
-          Read by OCR — this page had no text layer, so the text below is a
-          model transcription{% if source_file.ocr_engine %}
+          Read by OCR — {{ extracted_page.ocr_reason_explanation }}, so the text
+          below is a model transcription{% if source_file.ocr_engine %}
           (<span class="num">{{ source_file.ocr_engine }}</span>){% endif %}.
           Worth a glance before you rely on it.
         </p>
@@ -51,8 +51,8 @@
         This page has no text layer — its content is an image, a screenshot or a diagram.
       </p>
       <p class="caption">
-        Reading it needs text recognition (OCR), which is not part of this version.
-        Nothing was lost in extraction: there is no text here to extract.
+        Text recognition (OCR) was tried and could not read it either, so the page
+        is flagged rather than passed off as read.
         {% if extracted_page.text %}
           The only readable characters on the page are shown below.
         {% endif %}
@@ -60,6 +60,13 @@
       {% if extracted_page.text %}
         <div class="page-text" dir="auto">{{ extracted_page.text }}</div>
       {% endif %}
+    {% elif extracted_page.is_partially_unread %}
+      <p class="status status--warn">
+        Only part of this page could be read — {{ extracted_page.ocr_reason_explanation }},
+        and text recognition (OCR) did not recover the rest.
+      </p>
+      <p class="caption">What was read is shown below; treat it as incomplete.</p>
+      <div class="page-text" dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>{{ extracted_page.text }}</div>
     {% elif extracted_page.is_empty %}
       <p class="status status--warn">This page is blank.</p>
     {% else %}

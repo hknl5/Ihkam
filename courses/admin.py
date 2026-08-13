@@ -49,6 +49,6 @@ class SourceFileAdmin(admin.ModelAdmin):
 
 @admin.register(ExtractedPage)
 class ExtractedPageAdmin(admin.ModelAdmin):
-    list_display = ("source_file", "number", "source", "is_image_only")
-    list_filter = ("source", "is_image_only")
+    list_display = ("source_file", "number", "source", "ocr_reason", "is_image_only")
+    list_filter = ("source", "ocr_reason", "is_image_only")
     search_fields = ("source_file__original_name", "text")

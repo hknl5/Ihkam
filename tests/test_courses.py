@@ -573,3 +573,239 @@ class OCRQuotaTests(TestCase):
         # Nothing junk stored for the pages that were never read.
         for page in source_file.pages.filter(is_image_only=True):
             self.assertEqual(page.source, ExtractedPage.Source.TEXT_LAYER)
+
+
+# --- The three shapes of page that must be re-read --------------------------
+#
+# Thresholds were measured on the real uploaded files (ch10.3.pdf and the
+# Arabic guidelines file); the numbers and the pages that set them are recorded
+# in config/settings.py. These lock in the decision at each boundary, including
+# the pages that must *not* be re-read.
+
+REASON = ExtractedPage.OCRReason
+
+
+def signals(letters=200, total_chars=0, unmappable=0, image_coverage=0.0, has_content=True):
+    from courses.services.ingest import PageSignals
+
+    return PageSignals(
+        letters=letters,
+        total_chars=total_chars or max(letters, 1),
+        unmappable=unmappable,
+        image_coverage=image_coverage,
+        has_content=has_content,
+    )
+
+
+class OCRTriggerTests(TestCase):
+    """Which pages `classify_ocr_need` sends for OCR, and which it leaves alone."""
+
+    def classify(self, **kwargs):
+        from courses.services.ingest import classify_ocr_need
+
+        return classify_ocr_need(signals(**kwargs))
+
+    def test_a_page_with_nothing_readable_is_image_only(self):
+        self.assertEqual(self.classify(letters=1, image_coverage=0.8), REASON.IMAGE_ONLY)
+
+    def test_a_genuinely_blank_page_is_not_sent_for_ocr(self):
+        # Honesty runs both ways: a blank page is blank, not "unread".
+        self.assertEqual(self.classify(letters=0, has_content=False), "")
+
+    def test_a_title_over_a_body_image_is_mixed(self):
+        # ch10.3 pages 3, 4, 5: 36 letters of title, body inside an image.
+        self.assertEqual(self.classify(letters=36, image_coverage=0.27), REASON.MIXED)
+
+    def test_a_full_page_of_text_beside_a_large_figure_is_left_alone(self):
+        # ch10.3 page 31: 0.49 coverage — more than the broken pages — but the
+        # body prose is all in the text layer. Coverage alone would re-read it.
+        self.assertEqual(self.classify(letters=154, image_coverage=0.49), "")
+
+    def test_a_normal_page_with_one_small_figure_is_left_alone(self):
+        # ch10.3 page 43: a real page, one small image.
+        self.assertEqual(self.classify(letters=287, image_coverage=0.18), "")
+
+    def test_a_short_page_with_no_image_is_left_alone(self):
+        # ch10.3 page 37: 47 letters, diagram drawn as vector art with its
+        # labels in the text layer. Letters alone would re-read it.
+        self.assertEqual(self.classify(letters=47, image_coverage=0.0), "")
+
+    def test_a_page_of_font_junk_is_defective(self):
+        # The Arabic file's page 16: 39 unmappable chars in its heading.
+        self.assertEqual(
+            self.classify(letters=991, total_chars=1223, unmappable=39),
+            REASON.DEFECTIVE_FONT,
+        )
+
+    def test_one_or_two_junk_characters_are_not_worth_an_ocr_call(self):
+        for count in (1, 2, 4):
+            self.assertEqual(
+                self.classify(letters=202, total_chars=279, unmappable=count),
+                "",
+                f"{count} junk chars should not trigger OCR",
+            )
+
+    def test_a_few_stray_glyphs_on_a_very_long_page_do_not_trigger(self):
+        self.assertEqual(self.classify(letters=9000, total_chars=12000, unmappable=8), "")
+
+    def test_greek_maths_notation_is_not_mistaken_for_font_junk(self):
+        # Measured on ch10.3.pdf: 57 real α, β, γ, δ. Counting those as junk
+        # reported a clean file as broken and would re-read every maths page.
+        from courses.services.ingest import UNMAPPABLE_GLYPHS
+
+        self.assertEqual(UNMAPPABLE_GLYPHS.findall("α(x) = x′, β, γ, δ"), [])
+        # The Arabic file's real defect: glyphs mapped into Latin Extended.
+        self.assertEqual(len(UNMAPPABLE_GLYPHS.findall("كيŚ ũŻكŮ الاĸتřادę")), 7)
+
+    def test_a_page_with_no_text_layer_at_all_beats_the_other_reasons(self):
+        # Recorded as the reason that describes the page best.
+        self.assertEqual(
+            self.classify(letters=0, unmappable=40, image_coverage=0.9), REASON.IMAGE_ONLY
+        )
+
+
+def make_mixed_pdf() -> bytes:
+    """A deck like ch10.3 pages 3-5: the title has a text layer, the body of
+    the slide is a pasted image, so most of the page is silently unread."""
+    from reportlab.lib.utils import ImageReader
+
+    picture = ImageReader(io.BytesIO(_png_bytes()))
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    # A complete slide: real body text, and a small figure beside it.
+    pdf.drawString(72, 800, "1")
+    pdf.drawString(72, 770, "Logical Gates and Combinatorial Circuits")
+    pdf.drawString(72, 740, "A NOT gate can be implemented using a NAND gate, and an")
+    pdf.drawString(72, 710, "AND gate can be implemented using two NAND gates in series.")
+    pdf.drawImage(picture, 72, 500, width=150, height=110)
+    pdf.showPage()
+    # A mixed slide: the title only, with the body as a large image.
+    pdf.drawString(72, 800, "2")
+    pdf.drawString(72, 770, "Logical Gates and Combinatorial Circuits")
+    pdf.drawImage(picture, 72, 300, width=400, height=300)
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+class MixedPageTests(TestCase):
+    """A page whose title reads and whose body is an image (case b)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("nadia", password="quiet-precision-42")
+        self.course = Course.objects.create(
+            instructor=self.user, name="Discrete Maths", code="CS210"
+        )
+
+    def _ingest(self, provider=None, content=None):
+        source_file = SourceFile.objects.create(
+            course=self.course,
+            file=SimpleUploadedFile("deck.pdf", content or make_mixed_pdf()),
+            original_name="deck.pdf",
+            kind=SourceFile.Kind.PDF,
+        )
+        return ingest_source_file(source_file, ocr_provider=provider or FakeOCRProvider())
+
+    def test_the_body_image_is_read_and_the_title_page_is_not_touched(self):
+        source_file = self._ingest()
+
+        complete, mixed = source_file.pages.all()
+        self.assertEqual(complete.source, ExtractedPage.Source.TEXT_LAYER)
+        self.assertEqual(complete.ocr_reason, "")
+        self.assertEqual(mixed.source, ExtractedPage.Source.OCR)
+        self.assertEqual(mixed.ocr_reason, REASON.MIXED)
+
+    def test_the_ocr_text_replaces_the_partial_text_layer_outright(self):
+        # One source per page: no merging, so nothing can be duplicated.
+        source_file = self._ingest(FakeOCRProvider(text="The full slide body, transcribed."))
+
+        mixed = source_file.pages.get(number=2)
+        self.assertEqual(mixed.text, "The full slide body, transcribed.")
+        self.assertNotIn("Logical Gates", mixed.text)
+
+    def test_a_file_whose_pages_were_all_recovered_is_ready(self):
+        source_file = self._ingest()
+
+        self.assertEqual(source_file.status, SourceFile.Status.READY)
+        self.assertEqual(source_file.pages_without_text, 0)
+        self.assertEqual(source_file.pages_from_ocr, 1)
+
+    def test_the_file_says_how_many_pages_were_re_read_and_why(self):
+        source_file = self._ingest()
+
+        self.assertIn("body content in an image", source_file.status_detail)
+        self.assertEqual(
+            source_file.ocr_breakdown,
+            [{"reason": REASON.MIXED, "label": REASON.MIXED.label, "read": 1,
+              "unread": 0, "pages": [2]}],
+        )
+
+    def test_a_mixed_page_ocr_could_not_read_is_flagged_not_passed_off(self):
+        source_file = self._ingest(FakeOCRProvider(text=None))
+
+        mixed = source_file.pages.get(number=2)
+        self.assertEqual(mixed.source, ExtractedPage.Source.TEXT_LAYER)
+        self.assertTrue(mixed.is_partially_unread)
+        self.assertEqual(source_file.status, SourceFile.Status.PARTIAL_TEXT)
+        # The title it did extract is kept — nothing is thrown away.
+        self.assertIn("Logical Gates", mixed.text)
+
+    def test_the_reader_marks_a_page_that_is_only_partly_read(self):
+        source_file = self._ingest(FakeOCRProvider(text=None))
+        self.client.login(username="nadia", password="quiet-precision-42")
+
+        response = self.client.get(source_file.get_absolute_url(), {"page": 2})
+
+        self.assertContains(response, "Only part of this page could be read")
+        self.assertContains(response, "Logical Gates")
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+class DefectiveFontPageTests(TestCase):
+    """A page with a full text layer of font junk (case c).
+
+    The trigger itself is covered by `OCRTriggerTests` against the real file's
+    measurements; what matters here is that such a page is re-read whole, and
+    that a short transcription never silently replaces a page of real text.
+    """
+
+    def setUp(self):
+        user = User.objects.create_user("nadia", password="quiet-precision-42")
+        course = Course.objects.create(instructor=user, name="Policy", code="AR101")
+        self.source_file = SourceFile.objects.create(
+            course=course,
+            file=SimpleUploadedFile("guidelines.pdf", make_pdf()),
+            original_name="guidelines.pdf",
+            kind=SourceFile.Kind.PDF,
+        )
+        ingest_source_file(self.source_file, run_ocr=False)
+        self.page = self.source_file.pages.get(number=1)
+        self.original = self.page.text
+        self.page.ocr_reason = REASON.DEFECTIVE_FONT
+        self.page.save(update_fields=["ocr_reason"])
+
+    def _run(self, provider):
+        from courses.services.ingest import ocr_pages_needing_it
+
+        run = ocr_pages_needing_it(self.source_file, provider)
+        self.page.refresh_from_db()
+        return run
+
+    def test_the_whole_page_is_re_read_and_marked_as_ocr(self):
+        long_enough = " ".join(["Precision is the share of predicted positives"] * 3)
+        run = self._run(FakeOCRProvider(text=long_enough))
+
+        self.assertEqual(run.read, 1)
+        self.assertEqual(run.reasons_read, {REASON.DEFECTIVE_FONT: 1})
+        self.assertEqual(self.page.source, ExtractedPage.Source.OCR)
+        self.assertEqual(self.page.text, long_enough)
+
+    def test_a_truncated_transcription_never_replaces_a_page_of_real_text(self):
+        # Losing a page of body text to fix a heading would be the worse bug.
+        run = self._run(FakeOCRProvider(text="Chapter 1"))
+
+        self.assertEqual(run.read, 0)
+        self.assertEqual(run.kept_text_layer, 1)
+        self.assertEqual(self.page.text, self.original)
+        self.assertEqual(self.page.source, ExtractedPage.Source.TEXT_LAYER)

@@ -150,6 +150,31 @@ class SourceFile(models.Model):
         return self.status in {self.Status.READY, self.Status.PARTIAL_TEXT}
 
     @property
+    def ocr_breakdown(self) -> list[dict]:
+        """Per-reason counts of the pages extraction could not read in full.
+
+        Built from the pages rather than stored on the file, so it can never
+        drift out of step with them. `read` is how many OCR recovered; `unread`
+        is how many are still flagged, and is never quietly folded into `read`.
+        """
+        rows = []
+        for reason, label in ExtractedPage.OCRReason.choices:
+            pages = [p for p in self.pages.all() if p.ocr_reason == reason]
+            if not pages:
+                continue
+            read = sum(1 for p in pages if p.is_from_ocr)
+            rows.append(
+                {
+                    "reason": reason,
+                    "label": label,
+                    "read": read,
+                    "unread": len(pages) - read,
+                    "pages": [p.number for p in pages],
+                }
+            )
+        return rows
+
+    @property
     def status_tone(self) -> str:
         """Maps to the design system's `.status--*` modifiers (§5)."""
         return {
@@ -173,6 +198,20 @@ class ExtractedPage(models.Model):
         TEXT_LAYER = "text_layer", "Text layer"
         OCR = "ocr", "Read by OCR"
 
+    class OCRReason(models.TextChoices):
+        """Why extraction could not be trusted to have read the whole page.
+
+        The one principle behind all three: a little extractable text is not
+        proof the page is complete.
+        """
+
+        #: Nothing readable at all — the page is a screenshot or a scan.
+        IMAGE_ONLY = "image_only", "No text layer"
+        #: A text layer for the title, with the body content inside an image.
+        MIXED = "mixed", "Text layer covers only part of the page"
+        #: A full text layer, but the embedded fonts map letters to junk.
+        DEFECTIVE_FONT = "defective_font", "Embedded fonts map letters to junk"
+
     source_file = models.ForeignKey(SourceFile, on_delete=models.CASCADE, related_name="pages")
     number = models.PositiveIntegerField(help_text="1-based page number in the source document.")
     text = models.TextField(blank=True)
@@ -185,6 +224,12 @@ class ExtractedPage(models.Model):
     #: that could be read, by extraction or by OCR. Distinct from a genuinely
     #: blank page: this one still holds something we cannot see.
     is_image_only = models.BooleanField(default=False)
+    #: Why this page was sent for OCR, kept after the fact: it is the only
+    #: record of *what* was wrong with the text layer, and the counts per file
+    #: are built from it. Blank for a page extraction read in full.
+    ocr_reason = models.CharField(
+        max_length=16, choices=OCRReason.choices, blank=True, default=""
+    )
 
     class Meta:
         ordering = ["number"]
@@ -204,3 +249,27 @@ class ExtractedPage(models.Model):
     @property
     def is_from_ocr(self) -> bool:
         return self.source == self.Source.OCR
+
+    @property
+    def is_partially_unread(self) -> bool:
+        """Text was extracted, but not all of the page's content.
+
+        A mixed or defective-font page OCR could not recover. It reads like an
+        ordinary page, which is exactly why it has to be marked: the missing
+        part is invisible.
+        """
+        return bool(self.ocr_reason) and not self.is_from_ocr and not self.is_image_only
+
+    @property
+    def ocr_reason_explanation(self) -> str:
+        """Why this page was re-read, in words for the instructor."""
+        return {
+            self.OCRReason.IMAGE_ONLY: "this page had no text layer",
+            self.OCRReason.MIXED: (
+                "only part of this page had a text layer — the rest of its content "
+                "sits in an image"
+            ),
+            self.OCRReason.DEFECTIVE_FONT: (
+                "this page's embedded fonts do not map to real letters"
+            ),
+        }.get(self.ocr_reason, "extraction could not read this page in full")

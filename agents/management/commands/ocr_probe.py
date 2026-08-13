@@ -59,8 +59,10 @@ class Command(BaseCommand):
             if options["pages"]:
                 numbers = [int(n) for n in options["pages"].split(",") if n.strip()]
             elif options["image_only"]:
+                # Every page extraction could not read in full, not only the
+                # ones with no text layer at all.
                 numbers = list(
-                    source_file.pages.filter(is_image_only=True)
+                    source_file.pages.exclude(ocr_reason="")
                     .values_list("number", flat=True)[: options["limit"]]
                 )
             else:
@@ -76,7 +78,7 @@ class Command(BaseCommand):
             self.style.HTTP_INFO(
                 f"── page {number} "
                 f"(stored: {len(stored.strip())} chars"
-                f"{', flagged image-only' if page and page.is_image_only else ''})"
+                f"{', flagged ' + page.ocr_reason if page and page.ocr_reason else ''})"
             )
         )
         try:

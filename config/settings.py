@@ -170,6 +170,39 @@ OCR_MAX_PAGES_PER_FILE = int(env("OCR_MAX_PAGES_PER_FILE", "60"))
 # only a few requests per minute, so a page is retried rather than lost.
 OCR_MAX_ATTEMPTS = int(env("OCR_MAX_ATTEMPTS", "5"))
 
+# --- When a page is re-read by OCR (see courses/services/ingest.py) ---------
+# A little extractable text is not proof a page is complete. Three shapes of
+# incomplete page are re-read; every threshold below was measured on the real
+# uploaded lecture files, and the numbers are recorded next to each one so a
+# later change can be argued against the same evidence.
+
+# A "mixed" page: a real text layer for the title, with the body sitting in an
+# image. Both conditions must hold — either alone misfires on real pages.
+# Measured on ch10.3.pdf: the broken pages (3, 4, 5, 7, 35) have 14-36 letters
+# under 0.27-0.41 image coverage, while complete pages carry 104-366 letters
+# (page 31 is complete under 0.49 coverage, so coverage alone would re-read it,
+# and page 37 has 47 letters with no image at all, so letters alone would too).
+OCR_MIXED_MAX_LETTERS = int(env("OCR_MIXED_MAX_LETTERS", "80"))
+OCR_MIXED_MIN_IMAGE_COVERAGE = float(env("OCR_MIXED_MIN_IMAGE_COVERAGE", "0.20"))
+
+# A "defective font" page: a full text layer whose embedded fonts have broken
+# ToUnicode tables, so letters arrive as unmappable junk. Measured on the
+# Arabic guidelines file, where the junk sits in the headings: per-page counts
+# run 0, 0, 1, 2, 4, then 8, 9, 12 ... 39. The gap at 4 → 8 is the widest in
+# that range, which is where the floor goes — one or two stray glyphs are not
+# worth an OCR call, a mangled heading is.
+OCR_DEFECTIVE_MIN_CHARS = int(env("OCR_DEFECTIVE_MIN_CHARS", "8"))
+# A floor, not the main test: it only stops a handful of stray glyphs on a very
+# long page from counting. Ratio cannot lead, because on a short page 2 junk
+# chars already reach 0.03.
+OCR_DEFECTIVE_MIN_RATIO = float(env("OCR_DEFECTIVE_MIN_RATIO", "0.005"))
+
+# A transcription that comes back far shorter than the text layer it would
+# replace is treated as truncated, and the text layer is kept. This only ever
+# guards pages that already had substantial text (the defective-font case);
+# an image-only or mixed page has almost none to lose.
+OCR_MIN_KEEP_RATIO = float(env("OCR_MIN_KEEP_RATIO", "0.6"))
+
 # Embedding dimension the app stores in pgvector. Providers are asked to emit
 # this width so switching providers does not invalidate stored vectors.
 EMBEDDING_DIM = int(env("EMBEDDING_DIM", "1536"))
