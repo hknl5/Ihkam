@@ -78,3 +78,41 @@ class RenderPageTests(SimpleTestCase):
 
         with self.assertRaises(ExtractionError):
             render_page_png(io.BytesIO(self._pdf()), 9)
+
+
+class RateLimitTests(SimpleTestCase):
+    """A per-minute limit is worth waiting out; a per-day quota is not."""
+
+    def test_a_per_minute_limit_uses_the_servers_own_retry_delay(self):
+        from agents.ocr import _rate_limit_delay
+
+        exc = Exception(
+            "429 RESOURCE_EXHAUSTED. quotaId: "
+            "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', "
+            "'retryDelay': '52s'"
+        )
+        self.assertAlmostEqual(_rate_limit_delay(exc), 53.0)
+
+    def test_a_per_day_quota_is_not_waited_out(self):
+        from agents.ocr import _is_daily_quota, _rate_limit_delay
+
+        exc = Exception(
+            "429 RESOURCE_EXHAUSTED. quotaId: "
+            "'GenerateRequestsPerDayPerProjectPerModel-FreeTier', "
+            "'retryDelay': '55s'"
+        )
+        # Waiting 55s for a quota that resets tomorrow just hangs the upload.
+        self.assertIsNone(_rate_limit_delay(exc))
+        self.assertTrue(_is_daily_quota(exc))
+
+    def test_ordinary_errors_are_not_retried(self):
+        from agents.ocr import _rate_limit_delay
+
+        self.assertIsNone(_rate_limit_delay(Exception("400 INVALID_ARGUMENT")))
+
+    def test_a_rate_limit_without_a_stated_delay_backs_off(self):
+        from agents.ocr import MAX_RETRY_DELAY_SECONDS, _rate_limit_delay
+
+        delay = _rate_limit_delay(Exception("429 too many requests"), attempt=3)
+        self.assertGreater(delay, 8.0)
+        self.assertLessEqual(delay, MAX_RETRY_DELAY_SECONDS)

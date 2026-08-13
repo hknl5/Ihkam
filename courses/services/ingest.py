@@ -14,7 +14,9 @@ from __future__ import annotations
 import io
 import logging
 import re
+import threading
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -286,11 +288,36 @@ def _unmappable_message(count: int) -> str:
     )
 
 
-def ingest_source_file(source_file: SourceFile) -> SourceFile:
-    """Extract `source_file` and store its pages. Never raises for bad input.
+def _over_cap_message(skipped: int, cap: int) -> str:
+    return (
+        f"{skipped} further pages with no text layer were left unread: this file is "
+        f"over the {cap}-page OCR limit for a single upload. Raise "
+        "OCR_MAX_PAGES_PER_FILE and upload again to read the rest."
+    )
 
-    Failure is recorded on the row (`status` + `status_detail`) and shown to
-    the instructor; only a genuine bug propagates.
+
+@dataclass
+class OCRRun:
+    """What one OCR pass over a file did."""
+
+    attempted: int = 0
+    read: int = 0
+    still_unreadable: int = 0
+    skipped_over_cap: int = 0
+    engine: str = ""
+    error: str = ""
+
+
+def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=None) -> SourceFile:
+    """Extract `source_file`, store its pages, and OCR the ones with no text.
+
+    Never raises for bad input: failure is recorded on the row (`status` +
+    `status_detail`) and shown to the instructor; only a genuine bug
+    propagates. OCR runs inline — a slide deck costs about a minute, which is
+    the price of the file being readable when the instructor next looks at it.
+
+    Pass `run_ocr=False` (or set `OCR_ENABLED=false`) to skip the OCR pass;
+    pages then simply stay flagged as needing it.
     """
     try:
         with source_file.file.open("rb") as fh:
@@ -308,43 +335,173 @@ def ingest_source_file(source_file: SourceFile) -> SourceFile:
                 number=p.number,
                 text=p.text,
                 is_image_only=p.is_image_only,
+                source=ExtractedPage.Source.TEXT_LAYER,
             )
             for p in pages
         )
-
-        readable = [p for p in pages if p.text.strip()]
-        image_only = [p for p in pages if p.is_image_only]
-        unmappable = sum(p.unmappable_chars for p in pages)
-
-        if not readable:
-            status, detail = SourceFile.Status.NO_TEXT, NO_TEXT_MESSAGE
-        elif image_only:
-            # Some pages read, some are pictures. Saying "ready" here is what
-            # made a 43-page deck look complete when half of it was unread.
-            status = SourceFile.Status.PARTIAL_TEXT
-            detail = _partial_text_message(len(image_only), len(pages))
-        else:
-            status, detail = SourceFile.Status.READY, ""
-
-        if unmappable:
-            detail = f"{detail} {_unmappable_message(unmappable)}".strip()
-
         source_file.page_count = len(pages)
-        source_file.pages_without_text = len(image_only)
-        source_file.unmappable_chars = unmappable
-        source_file.status = status
-        source_file.status_detail = detail
-        source_file.extracted_at = timezone.now()
+        source_file.unmappable_chars = sum(p.unmappable_chars for p in pages)
+        source_file.pages_from_ocr = 0
+        source_file.ocr_engine = ""
         source_file.save(
-            update_fields=[
-                "page_count",
-                "pages_without_text",
-                "unmappable_chars",
-                "status",
-                "status_detail",
-                "extracted_at",
-            ]
+            update_fields=["page_count", "unmappable_chars", "pages_from_ocr", "ocr_engine"]
         )
+
+    if run_ocr is None:
+        run_ocr = getattr(settings, "OCR_ENABLED", False)
+    run = ocr_image_only_pages(source_file, ocr_provider) if run_ocr else OCRRun()
+
+    return _finalize_extraction(source_file, run)
+
+
+def ocr_image_only_pages(source_file: SourceFile, provider=None) -> OCRRun:
+    """Transcribe every page of `source_file` that has no text layer.
+
+    One page per request — batching pages into a single call measurably
+    degrades transcription quality, so concurrency is used only to shorten the
+    total wait, never to change what is asked of the model.
+
+    A page whose transcription comes back empty keeps its `is_image_only`
+    flag: a blank result is reported as unread, never stored as read.
+    """
+    from agents.ocr import OCRError, get_ocr_provider  # the seam; see agents/ocr.py
+
+    pending = list(source_file.pages.filter(is_image_only=True).order_by("number"))
+    if not pending:
+        return OCRRun()
+
+    try:
+        provider = provider or get_ocr_provider()
+    except (OCRError, NotImplementedError) as exc:
+        logger.warning("OCR unavailable: %s", exc)
+        return OCRRun(still_unreadable=len(pending), error=str(exc))
+
+    cap = getattr(settings, "OCR_MAX_PAGES_PER_FILE", 60)
+    targets, skipped = pending[:cap], pending[cap:]
+    engine = f"{provider.name}/{getattr(provider, 'model', '')}".rstrip("/")
+    language_hint = source_file.course.content_language
+
+    # Rendering is local and PDFium is not safe to drive from several threads,
+    # so pages are rasterised here and only the network calls fan out.
+    images: dict[int, bytes] = {}
+    with source_file.file.open("rb") as fh:
+        document = fh.read()
+    for page in targets:
+        try:
+            images[page.number] = render_page_png(io.BytesIO(document), page.number)
+        except ExtractionError:
+            logger.warning("Could not render page %s for OCR", page.number, exc_info=True)
+
+    workers = max(1, min(getattr(settings, "OCR_CONCURRENCY", 5), len(images) or 1))
+    transcriptions: dict[int, str] = {}
+    # Set when the provider's quota is spent: every remaining page would fail
+    # the same way, so the pass stops instead of grinding through them.
+    exhausted = threading.Event()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_ocr_one_page, provider, image, language_hint, exhausted): number
+            for number, image in images.items()
+        }
+        for future in as_completed(futures):
+            number = futures[future]
+            text = future.result()
+            if text:
+                transcriptions[number] = text
+
+    read = 0
+    with transaction.atomic():
+        for page in targets:
+            text = transcriptions.get(page.number, "")
+            if not text:
+                continue  # stays flagged — an unread page is not a blank page
+            page.text = text
+            page.source = ExtractedPage.Source.OCR
+            page.is_image_only = False
+            page.save(update_fields=["text", "source", "is_image_only"])
+            read += 1
+
+        source_file.pages_from_ocr = read
+        source_file.ocr_engine = engine if read else ""
+        source_file.save(update_fields=["pages_from_ocr", "ocr_engine"])
+
+    return OCRRun(
+        attempted=len(targets),
+        read=read,
+        still_unreadable=len(targets) - read,
+        skipped_over_cap=len(skipped),
+        engine=engine,
+        error=(
+            "the OCR provider's daily quota ran out part-way through"
+            if exhausted.is_set()
+            else ""
+        ),
+    )
+
+
+def _ocr_one_page(provider, image: bytes, language_hint: str, exhausted=None) -> str:
+    """One page, one call. Returns "" for anything not worth storing."""
+    from agents.ocr import OCRQuotaExhausted
+
+    if exhausted is not None and exhausted.is_set():
+        return ""
+    try:
+        result = provider.ocr_page(image, language_hint=language_hint)
+    except OCRQuotaExhausted as exc:
+        if exhausted is not None:
+            exhausted.set()
+        logger.warning("OCR stopped: %s", exc)
+        return ""
+    except Exception:  # noqa: BLE001 — one unreadable page must not lose the rest
+        logger.warning("OCR call failed", exc_info=True)
+        return ""
+    if not result.is_usable:
+        return ""
+    return normalize_whitespace(result.text)
+
+
+def _finalize_extraction(source_file: SourceFile, run: OCRRun) -> SourceFile:
+    """Set status and counts from the stored pages, after any OCR pass."""
+    pages = list(source_file.pages.all())
+    readable = [p for p in pages if p.text.strip() and not p.is_image_only]
+    image_only = [p for p in pages if p.is_image_only]
+
+    if not readable:
+        status, detail = SourceFile.Status.NO_TEXT, NO_TEXT_MESSAGE
+    elif image_only:
+        status = SourceFile.Status.PARTIAL_TEXT
+        detail = _partial_text_message(len(image_only), len(pages))
+    else:
+        status, detail = SourceFile.Status.READY, ""
+
+    notes = [detail]
+    if run.read:
+        notes.append(
+            f"{run.read} of them were read by OCR ({run.engine}); that text is a "
+            "model transcription, not a text layer."
+        )
+    if run.skipped_over_cap:
+        notes.append(_over_cap_message(run.skipped_over_cap, settings.OCR_MAX_PAGES_PER_FILE))
+    if run.error:
+        notes.append(
+            f"Some pages were left unread because {run.error}."
+            if run.read
+            else f"OCR did not run: {run.error}"
+        )
+    if source_file.unmappable_chars:
+        notes.append(_unmappable_message(source_file.unmappable_chars))
+
+    source_file.pages_without_text = len(image_only)
+    source_file.status = status
+    source_file.status_detail = " ".join(n for n in notes if n).strip()
+    source_file.extracted_at = timezone.now()
+    source_file.save(
+        update_fields=[
+            "pages_without_text",
+            "status",
+            "status_detail",
+            "extracted_at",
+        ]
+    )
     return source_file
 
 
@@ -354,6 +511,8 @@ def _record_failure(source_file: SourceFile, status: str, detail: str) -> Source
     source_file.page_count = 0
     source_file.pages_without_text = 0
     source_file.unmappable_chars = 0
+    source_file.pages_from_ocr = 0
+    source_file.ocr_engine = ""
     source_file.extracted_at = timezone.now()
     source_file.save(
         update_fields=[
@@ -362,6 +521,8 @@ def _record_failure(source_file: SourceFile, status: str, detail: str) -> Source
             "page_count",
             "pages_without_text",
             "unmappable_chars",
+            "pages_from_ocr",
+            "ocr_engine",
             "extracted_at",
         ]
     )

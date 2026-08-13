@@ -119,6 +119,11 @@ class SourceFile(models.Model):
     pages_without_text = models.PositiveIntegerField(default=0)
     #: Characters the file's own embedded fonts could not map to real letters.
     unmappable_chars = models.PositiveIntegerField(default=0)
+    #: Pages whose text came from OCR rather than a text layer.
+    pages_from_ocr = models.PositiveIntegerField(default=0)
+    #: Which engine read them, kept for traceability when OCR is re-run or
+    #: the provider is switched (e.g. "gemini/gemini-3.6-flash").
+    ocr_engine = models.CharField(max_length=100, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     extracted_at = models.DateTimeField(null=True, blank=True)
 
@@ -164,12 +169,21 @@ class ExtractedPage(models.Model):
     citation ("source: page 14") depends on the page number surviving ingest.
     """
 
+    class Source(models.TextChoices):
+        TEXT_LAYER = "text_layer", "Text layer"
+        OCR = "ocr", "Read by OCR"
+
     source_file = models.ForeignKey(SourceFile, on_delete=models.CASCADE, related_name="pages")
     number = models.PositiveIntegerField(help_text="1-based page number in the source document.")
     text = models.TextField(blank=True)
+    #: Where the text came from. A model transcription is not the same
+    #: evidence as a text layer, and later milestones weigh it accordingly.
+    source = models.CharField(
+        max_length=12, choices=Source.choices, default=Source.TEXT_LAYER
+    )
     #: The page has content — a screenshot, a figure, a scan — but no text
-    #: layer. Distinct from a genuinely blank page, and from a page we simply
-    #: failed to read: this one needs OCR, which is deferred.
+    #: that could be read, by extraction or by OCR. Distinct from a genuinely
+    #: blank page: this one still holds something we cannot see.
     is_image_only = models.BooleanField(default=False)
 
     class Meta:
@@ -186,3 +200,7 @@ class ExtractedPage(models.Model):
     @property
     def is_empty(self) -> bool:
         return not self.text.strip()
+
+    @property
+    def is_from_ocr(self) -> bool:
+        return self.source == self.Source.OCR

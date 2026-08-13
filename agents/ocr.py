@@ -18,6 +18,9 @@ is the local phase-2 path, stubbed the way ``AirLLMProvider`` is.
 from __future__ import annotations
 
 import logging
+import random
+import re
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -110,6 +113,47 @@ def _user_prompt(language_hint: str) -> str:
     return f"Transcribe this page. {hint}".strip()
 
 
+#: How long to wait when a provider says "too many requests". The server's own
+#: retryDelay is preferred; otherwise back off exponentially.
+_RETRY_DELAY_PATTERN = re.compile(r"retryDelay['\"]?[:=]\s*['\"]?(\d+(?:\.\d+)?)")
+_RATE_LIMIT_MARKERS = ("429", "RESOURCE_EXHAUSTED", "rate limit", "quota")
+#: A *daily* quota does not come back in a minute. Waiting for one just makes
+#: an upload hang for the full retry budget and still fail — measured: 12
+#: minutes of waiting on an exhausted free-tier key.
+_DAILY_QUOTA_MARKERS = ("PerDay", "per day", "PerProjectPerDay")
+MAX_RETRY_DELAY_SECONDS = 75.0
+
+
+class OCRQuotaExhausted(OCRError):
+    """The provider's quota is spent for the day — retrying will not help."""
+
+
+def _rate_limit_delay(exc: Exception, attempt: int = 1) -> float | None:
+    """Seconds to wait before retrying, or None if waiting cannot help.
+
+    A per-minute rate limit is worth waiting out: a free-tier key allows only
+    a few requests a minute, and giving up would drop pages that are readable
+    a moment later. A per-day quota is not — that is reported immediately.
+    """
+    message = str(exc)
+    if not any(marker in message for marker in _RATE_LIMIT_MARKERS):
+        return None
+    if any(marker in message for marker in _DAILY_QUOTA_MARKERS):
+        return None
+    found = _RETRY_DELAY_PATTERN.search(message)
+    if found:
+        # A second of slack, so we do not come back a hair too early.
+        return min(float(found.group(1)) + 1.0, MAX_RETRY_DELAY_SECONDS)
+    return min(2.0**attempt + random.uniform(0, 1), MAX_RETRY_DELAY_SECONDS)
+
+
+def _is_daily_quota(exc: Exception) -> bool:
+    message = str(exc)
+    return any(m in message for m in _RATE_LIMIT_MARKERS) and any(
+        m in message for m in _DAILY_QUOTA_MARKERS
+    )
+
+
 # --- Gemini (phase 1 default) ------------------------------------------------
 
 
@@ -142,17 +186,32 @@ class GeminiOCRProvider(OCRProvider):
             # Transcription is not a creative task: take the likeliest reading.
             temperature=0.0,
         )
-        try:
-            response = self._client.models.generate_content(
-                model=self.model,
-                contents=[
-                    self._types.Part.from_bytes(data=image, mime_type=mime_type),
-                    _user_prompt(language_hint),
-                ],
-                config=config,
-            )
-        except Exception as exc:  # noqa: BLE001 — SDK raises many shapes
-            raise OCRError(f"Gemini could not read this page: {exc}") from exc
+        contents = [
+            self._types.Part.from_bytes(data=image, mime_type=mime_type),
+            _user_prompt(language_hint),
+        ]
+        attempts = max(1, getattr(settings, "OCR_MAX_ATTEMPTS", 5))
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — SDK raises many shapes
+                if _is_daily_quota(exc):
+                    raise OCRQuotaExhausted(
+                        "The Gemini daily free-tier quota is used up. OCR will work "
+                        "again when it resets, or immediately on a billed key."
+                    ) from exc
+                delay = _rate_limit_delay(exc, attempt)
+                if delay is None or attempt == attempts:
+                    raise OCRError(f"Gemini could not read this page: {exc}") from exc
+                # Free-tier keys allow only a handful of requests per minute.
+                # Waiting is the difference between a read page and a lost one.
+                logger.info(
+                    "OCR rate-limited, waiting %.0fs (attempt %s/%s)", delay, attempt, attempts
+                )
+                time.sleep(delay)
 
         text = (response.text or "").strip()
         return OCRResult(

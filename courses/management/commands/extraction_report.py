@@ -57,6 +57,8 @@ class Command(BaseCommand):
         self.stdout.write(
             f"  status={source_file.status}  pages={source_file.page_count}  "
             f"image-only={source_file.pages_without_text}  "
+            f"from-ocr={source_file.pages_from_ocr}"
+            f"{' (' + source_file.ocr_engine + ')' if source_file.ocr_engine else ''}  "
             f"unmappable-chars={source_file.unmappable_chars}"
         )
         if source_file.status_detail:
@@ -74,7 +76,9 @@ class Command(BaseCommand):
             junk = len(UNMAPPABLE.findall(page.text))
             note = ""
             if page.is_image_only:
-                note = "image/diagram only — needs OCR (deferred)"
+                note = "image/diagram only — no readable text"
+            elif page.is_from_ocr:
+                note = "read by OCR"
             elif not chars:
                 note = "blank page"
             elif chars < 20:

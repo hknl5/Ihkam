@@ -36,6 +36,14 @@
         of <span class="num">{{ source_file.page_count }}</span> —
         page numbers are kept so later questions can cite their source.
       </p>
+      {% if extracted_page.is_from_ocr %}
+        <p class="status status--info">
+          Read by OCR — this page had no text layer, so the text below is a
+          model transcription{% if source_file.ocr_engine %}
+          (<span class="num">{{ source_file.ocr_engine }}</span>){% endif %}.
+          Worth a glance before you rely on it.
+        </p>
+      {% endif %}
     </header>
 
     {% if extracted_page.is_image_only %}

@@ -52,11 +52,16 @@ def detail(request, pk):
             # Extraction is synchronous in M1: a lecture PDF takes well under a
             # second, and a visible result beats a background job to debug.
             ingest_source_file(source_file)
+            ocr_note = (
+                f" {source_file.pages_from_ocr} of them read by OCR."
+                if source_file.pages_from_ocr
+                else ""
+            )
             if source_file.is_ready:
                 messages.success(
                     request,
                     f"{source_file.original_name} uploaded — "
-                    f"{source_file.page_count} pages extracted.",
+                    f"{source_file.page_count} pages extracted.{ocr_note}",
                 )
             elif source_file.has_readable_text:
                 # Partly readable. Say which part is missing rather than
@@ -65,8 +70,8 @@ def detail(request, pk):
                     request,
                     f"{source_file.original_name} uploaded — "
                     f"{source_file.page_count - source_file.pages_without_text} of "
-                    f"{source_file.page_count} pages extracted. "
-                    f"{source_file.pages_without_text} have no text layer.",
+                    f"{source_file.page_count} pages extracted.{ocr_note} "
+                    f"{source_file.pages_without_text} still have no readable text.",
                 )
             else:
                 messages.warning(

@@ -154,6 +154,22 @@ GEMINI_OCR_MODEL = os.getenv("GEMINI_OCR_MODEL", "").strip() or GEMINI_MODEL
 # enough for small diagram labels, small enough to keep the request cheap.
 OCR_RENDER_WIDTH = int(env("OCR_RENDER_WIDTH", "1600"))
 
+# OCR runs during upload. Turn it off to upload without spending API calls
+# (tests do this); pages then simply stay flagged as needing OCR.
+OCR_ENABLED = env_bool("OCR_ENABLED", True)
+
+# One image per call — batching pages into a single request measurably
+# degrades transcription quality. Concurrency shortens the wait instead.
+OCR_CONCURRENCY = int(env("OCR_CONCURRENCY", "5"))
+
+# Upper bound on pages OCR'd per file. A file over the cap is not rejected:
+# the first pages are read and the rest stay flagged, with a clear message.
+OCR_MAX_PAGES_PER_FILE = int(env("OCR_MAX_PAGES_PER_FILE", "60"))
+
+# Attempts per page when the provider rate-limits us. Free Gemini keys allow
+# only a few requests per minute, so a page is retried rather than lost.
+OCR_MAX_ATTEMPTS = int(env("OCR_MAX_ATTEMPTS", "5"))
+
 # Embedding dimension the app stores in pgvector. Providers are asked to emit
 # this width so switching providers does not invalidate stored vectors.
 EMBEDDING_DIM = int(env("EMBEDDING_DIM", "1536"))

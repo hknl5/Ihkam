@@ -42,6 +42,9 @@
                   {{ source_file.get_kind_display }} ·
                   <span class="num">{{ source_file.page_count }}</span>
                   page{{ source_file.page_count|pluralize }}
+                  {% if source_file.pages_from_ocr %}
+                    (<span class="num">{{ source_file.pages_from_ocr }}</span> read by OCR)
+                  {% endif %}
                   {% if source_file.pages_without_text %}
                     (<span class="num">{{ source_file.pages_without_text }}</span> without text)
                   {% endif %} ·

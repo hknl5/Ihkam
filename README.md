@@ -68,15 +68,53 @@ article `ال` is two glyphs with two boxes, so the repair is exact and never
 touches ordinary text. Extracted text is stored in logical order and rendered
 with `dir="auto"`.
 
+### OCR (pages with no text layer)
+
+Pages flagged `is_image_only` are transcribed by a **vision-language model**,
+not a classic OCR engine: the material is Arabic + English, often on the same
+page, and VLMs read Arabic correctly where traditional engines return reversed
+or disconnected glyphs. This runs **synchronously during upload** — no queue,
+no background worker.
+
+`agents/ocr.py` is the seam, shaped exactly like `agents/provider.py`:
+`OCRProvider.ocr_page(image) -> OCRResult`, selected by `OCR_PROVIDER`.
+`GeminiOCRProvider` reuses the existing Gemini key; `PaddleVLProvider` is the
+local phase-2 stub (**full server model**, Apache-2.0 — not the mobile
+variant). Nothing outside that module imports a vision SDK.
+
+- **One image per request.** Batching pages into one call measurably degrades
+  transcription quality. Pages are sent concurrently (`OCR_CONCURRENCY`) only
+  to shorten the wait.
+- **OCR'd pages are marked** `source="ocr"` and labelled in the reader as a
+  model transcription, so later milestones can weigh that evidence differently
+  from a real text layer.
+- **Empty or failed transcriptions are never stored.** The page keeps its
+  "no readable text" flag — an unread page is not a blank page.
+- **`OCR_MAX_PAGES_PER_FILE`** caps the work per upload. A file over the cap is
+  not rejected: the first pages are read, the rest stay flagged, and the file
+  says so.
+
+```bash
+uv run python manage.py ocr_probe --file 1 --pages 8,13   # see a transcription
+uv run python manage.py ocr_probe --image-only --limit 4
+```
+
+> **API quota is the real constraint.** A free Gemini key is limited to a few
+> requests per *minute* and only ~20 per *day*. A per-minute limit is waited
+> out automatically (the server's own `retryDelay` is respected); a per-day
+> quota is not — it stops the pass immediately and records why, rather than
+> hanging the upload for a quota that resets tomorrow. A 21-page deck needs a
+> billed key to finish in one upload.
+
 ### Honest reporting of what could not be read
 
 Extraction never passes off a fragment as a full page:
 
-- **Pages with no text layer** (a slide whose body is a screenshot, a scan, a
-  diagram) are flagged `is_image_only`. The file's status becomes *Some pages
-  have no text layer* with the count, and the reader says the page needs OCR.
-  A file where **no** page has text is *No text layer*, as before. OCR is
-  deliberately deferred — but a half-read file is never reported as complete.
+- **Pages with no readable text** — not read by extraction *or* OCR — stay
+  flagged `is_image_only`. The file's status becomes *Some pages have no text
+  layer* with the count, and the reader says so on the page itself. A file
+  where **no** page has text is *No text layer*. A half-read file is never
+  reported as complete.
 - **Unmappable characters** are counted per file. Some PDFs embed subsetted
   fonts whose internal character tables are incomplete; the affected glyphs
   (usually decorative headings) cannot be recovered by any extractor without

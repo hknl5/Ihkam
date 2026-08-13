@@ -6,6 +6,7 @@ readable and the expected text lives next to the assertion.
 
 import io
 import tempfile
+import threading
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -16,6 +17,7 @@ from reportlab.pdfgen import canvas
 
 from courses.forms import MAX_UPLOAD_BYTES
 from courses.models import Course, ExtractedPage, SourceFile
+from agents.ocr import OCRResult
 from courses.services.ingest import (
     UnsupportedFormatError,
     extract_pages,
@@ -134,7 +136,7 @@ class ExtractionTests(TestCase):
                 extract_pages(io.BytesIO(b"anything"), kind)
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False)
 class UploadFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("nadia", password="quiet-precision-42")
@@ -351,7 +353,7 @@ def _png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False)
 class ImageOnlyPageTests(TestCase):
     """The reported bug: pages whose content is a screenshot came back as the
     slide number and were reported as fully extracted."""
@@ -398,3 +400,176 @@ class ImageOnlyPageTests(TestCase):
             self.url, {"file": upload("deck.pdf", make_image_pdf())}, follow=True
         )
         self.assertContains(response, "1 of 3 pages extracted")
+
+
+class FakeOCRProvider:
+    """Stands in for Gemini. Records what it was asked, one call per page."""
+
+    name = "fake"
+    model = "fake-vision"
+
+    def __init__(self, text="Transcribed slide body.", fail_on=()):
+        self.text = text
+        self.fail_on = fail_on
+        self.calls = []
+        self._lock = threading.Lock()
+
+    def ocr_page(self, image, *, mime_type="image/png", language_hint=""):
+        with self._lock:
+            self.calls.append((len(image), language_hint))
+        if len(self.calls) in self.fail_on:
+            raise RuntimeError("provider exploded")
+        if self.text is None:
+            return OCRResult(text="", is_empty=True, provider=self.name, model=self.model)
+        return OCRResult(text=self.text, provider=self.name, model=self.model)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+class OCRIntegrationTests(TestCase):
+    """OCR runs inline on upload and fills the pages extraction could not read."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("nadia", password="quiet-precision-42")
+        self.course = Course.objects.create(instructor=self.user, name="Discrete Maths", code="CS210")
+
+    def _upload(self, provider, **kwargs):
+        source_file = SourceFile.objects.create(
+            course=self.course,
+            file=SimpleUploadedFile("deck.pdf", make_image_pdf(text_pages=1, image_pages=3)),
+            original_name="deck.pdf",
+            kind=SourceFile.Kind.PDF,
+        )
+        return ingest_source_file(source_file, ocr_provider=provider, **kwargs)
+
+    def test_image_only_pages_are_read_and_marked_as_ocr(self):
+        provider = FakeOCRProvider()
+
+        source_file = self._upload(provider)
+
+        self.assertEqual(len(provider.calls), 3)  # one call per image-only page
+        self.assertEqual(source_file.pages_from_ocr, 3)
+        self.assertEqual(source_file.pages_without_text, 0)
+        self.assertEqual(source_file.status, SourceFile.Status.READY)
+        self.assertEqual(source_file.ocr_engine, "fake/fake-vision")
+
+        pages = list(source_file.pages.all())
+        self.assertEqual(pages[0].source, ExtractedPage.Source.TEXT_LAYER)
+        for page in pages[1:]:
+            self.assertEqual(page.source, ExtractedPage.Source.OCR)
+            self.assertIn("Transcribed slide body.", page.text)
+            self.assertFalse(page.is_image_only)
+
+    def test_one_image_per_call_never_a_batch(self):
+        provider = FakeOCRProvider()
+
+        self._upload(provider)
+
+        # Three separate calls, each carrying exactly one rendered page.
+        self.assertEqual(len(provider.calls), 3)
+        self.assertTrue(all(size > 0 for size, _ in provider.calls))
+
+    def test_the_course_content_language_is_passed_as_a_hint(self):
+        self.course.content_language = Course.ContentLanguage.ARABIC
+        self.course.save()
+        provider = FakeOCRProvider()
+
+        self._upload(provider)
+
+        self.assertEqual({hint for _, hint in provider.calls}, {"ar"})
+
+    def test_an_empty_transcription_leaves_the_page_flagged(self):
+        # Never store junk: a page the model could not read stays unreadable.
+        provider = FakeOCRProvider(text=None)
+
+        source_file = self._upload(provider)
+
+        self.assertEqual(source_file.pages_from_ocr, 0)
+        self.assertEqual(source_file.pages_without_text, 3)
+        self.assertEqual(source_file.status, SourceFile.Status.PARTIAL_TEXT)
+        self.assertEqual(source_file.ocr_engine, "")
+        self.assertTrue(all(p.is_image_only for p in source_file.pages.all()[1:]))
+
+    def test_one_failing_page_does_not_lose_the_others(self):
+        provider = FakeOCRProvider(fail_on=(2,))
+
+        source_file = self._upload(provider)
+
+        self.assertEqual(source_file.pages_from_ocr, 2)
+        self.assertEqual(source_file.pages_without_text, 1)
+
+    @override_settings(OCR_MAX_PAGES_PER_FILE=2)
+    def test_the_cap_reads_what_it_can_and_says_what_it_skipped(self):
+        provider = FakeOCRProvider()
+
+        source_file = self._upload(provider)
+
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(source_file.pages_from_ocr, 2)
+        self.assertEqual(source_file.pages_without_text, 1)  # left flagged, not lost
+        self.assertEqual(source_file.status, SourceFile.Status.PARTIAL_TEXT)
+        self.assertIn("over the 2-page OCR limit", source_file.status_detail)
+
+    @override_settings(OCR_ENABLED=False)
+    def test_ocr_can_be_turned_off_entirely(self):
+        provider = FakeOCRProvider()
+
+        source_file = self._upload(provider, run_ocr=False)
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(source_file.pages_without_text, 3)
+
+    def test_the_reader_marks_an_ocr_page_as_a_transcription(self):
+        source_file = self._upload(FakeOCRProvider())
+        self.client.login(username="nadia", password="quiet-precision-42")
+
+        response = self.client.get(source_file.get_absolute_url(), {"page": 2})
+
+        self.assertContains(response, "Read by OCR")
+        self.assertContains(response, "model transcription")
+        self.assertContains(response, "Transcribed slide body.")
+
+    def test_re_ingesting_does_not_leave_stale_ocr_provenance(self):
+        source_file = self._upload(FakeOCRProvider())
+        self.assertEqual(source_file.pages_from_ocr, 3)
+
+        ingest_source_file(source_file, run_ocr=False)
+
+        self.assertEqual(source_file.pages_from_ocr, 0)
+        self.assertEqual(source_file.ocr_engine, "")
+        self.assertFalse(source_file.pages.filter(source=ExtractedPage.Source.OCR).exists())
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+class OCRQuotaTests(TestCase):
+    """A spent daily quota stops the pass instead of grinding through it."""
+
+    class QuotaBurntProvider(FakeOCRProvider):
+        def ocr_page(self, image, *, mime_type="image/png", language_hint=""):
+            from agents.ocr import OCRQuotaExhausted
+
+            with self._lock:
+                self.calls.append((len(image), language_hint))
+                spent = len(self.calls) > 1
+            if spent:
+                raise OCRQuotaExhausted("The Gemini daily free-tier quota is used up.")
+            return OCRResult(text="First page only.", provider=self.name, model=self.model)
+
+    def test_pages_left_unread_stay_flagged_and_the_reason_is_recorded(self):
+        user = User.objects.create_user("nadia", password="quiet-precision-42")
+        course = Course.objects.create(instructor=user, name="Discrete Maths", code="CS210")
+        source_file = SourceFile.objects.create(
+            course=course,
+            file=SimpleUploadedFile("deck.pdf", make_image_pdf(text_pages=1, image_pages=3)),
+            original_name="deck.pdf",
+            kind=SourceFile.Kind.PDF,
+        )
+
+        ingest_source_file(source_file, ocr_provider=self.QuotaBurntProvider())
+
+        self.assertEqual(source_file.pages_from_ocr, 1)
+        self.assertEqual(source_file.pages_without_text, 2)
+        self.assertEqual(source_file.status, SourceFile.Status.PARTIAL_TEXT)
+        self.assertIn("daily quota", source_file.status_detail)
+        # Nothing junk stored for the pages that were never read.
+        for page in source_file.pages.filter(is_image_only=True):
+            self.assertEqual(page.source, ExtractedPage.Source.TEXT_LAYER)

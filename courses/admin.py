@@ -30,6 +30,7 @@ class SourceFileAdmin(admin.ModelAdmin):
         "status",
         "page_count",
         "pages_without_text",
+        "pages_from_ocr",
         "uploaded_at",
     )
     list_filter = ("kind", "status")
@@ -38,6 +39,8 @@ class SourceFileAdmin(admin.ModelAdmin):
         "page_count",
         "pages_without_text",
         "unmappable_chars",
+        "pages_from_ocr",
+        "ocr_engine",
         "status_detail",
         "uploaded_at",
         "extracted_at",
@@ -46,5 +49,6 @@ class SourceFileAdmin(admin.ModelAdmin):
 
 @admin.register(ExtractedPage)
 class ExtractedPageAdmin(admin.ModelAdmin):
-    list_display = ("source_file", "number")
+    list_display = ("source_file", "number", "source", "is_image_only")
+    list_filter = ("source", "is_image_only")
     search_fields = ("source_file__original_name", "text")
