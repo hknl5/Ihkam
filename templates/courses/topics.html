@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Topics — {{ course.code }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <span>Topics</span>
+</nav>
+
+<div class="page-head">
+  <h1>Topics</h1>
+  <p>
+    إحكام read this course's material and proposed the list below.
+    Nothing here is used until you have been through it — rename, merge, delete,
+    add what is missing, and mark anything you do not teach.
+  </p>
+</div>
+
+<ol class="stepper" aria-label="Where you are">
+  <li class="is-done">Course</li>
+  <li class="is-done">Upload</li>
+  <li class="is-current">Topics</li>
+  <li>Blueprint</li>
+  <li>Generate</li>
+  <li>Review</li>
+</ol>
+
+<dl class="tally" aria-label="What this list was built from">
+  <div>
+    <dt>Topics</dt>
+    <dd><span class="num">{{ included_count }}</span> in the syllabus{% if excluded_count %},
+      <span class="num">{{ excluded_count }}</span> not taught{% endif %}</dd>
+  </div>
+  <div>
+    <dt>Read from</dt>
+    <dd><span class="num">{{ readable_pages }}</span> readable page{{ readable_pages|pluralize }}</dd>
+  </div>
+  <div>
+    <dt>Pages ignored</dt>
+    <dd><span class="num">{{ unreadable_pages }}</span> could not be read</dd>
+  </div>
+  <div>
+    <dt>Passages indexed</dt>
+    <dd><span class="num">{{ chunk_count }}</span> chunk{{ chunk_count|pluralize }}</dd>
+  </div>
+</dl>
+
+{% if unreadable_pages %}
+  <div class="banner banner--warn" role="status">
+    <span class="banner__label">Known gap.</span>
+    <span>
+      <span class="num">{{ unreadable_pages }}</span> page{{ unreadable_pages|pluralize }} of this
+      course could not be read, so nothing on {{ unreadable_pages|pluralize:"it,them" }} contributed
+      to this list. Anything taught only on those pages has to be added by hand.
+    </span>
+  </div>
+{% endif %}
+
+{# Declared here, used by the checkboxes inside the topic cards via form="…".
+   A form cannot contain another form, and every topic row has its own. #}
+<form id="merge-form" method="post" action="{% url 'courses:topics_merge' course.pk %}">
+  {% csrf_token %}
+</form>
+
+<div class="split" style="margin-block-start: var(--space-8);">
+  <section aria-labelledby="topics-heading">
+    <h2 id="topics-heading" class="section-title">Extracted topics</h2>
+
+    {% if not has_files %}
+      <div class="empty-state">
+        <h2>No material yet</h2>
+        <p>Topics are read from what you upload. Add a lecture file first.</p>
+        <div class="action-bar" style="justify-content: center;">
+          <a class="btn btn--primary" href="{{ course.get_absolute_url }}">Upload material</a>
+        </div>
+      </div>
+    {% elif not topic_total %}
+      <div class="empty-state">
+        <h2>No topics yet</h2>
+        <p>
+          إحكام can read the <span class="num">{{ readable_pages }}</span> readable
+          page{{ readable_pages|pluralize }} of this course and propose the chapters and
+          sub-topics it finds. You decide what stays.
+        </p>
+        <form method="post" action="{% url 'courses:topics_extract' course.pk %}">
+          {% csrf_token %}
+          <div class="action-bar" style="justify-content: center;">
+            <button type="submit" class="btn btn--primary"{% if not readable_pages %} disabled{% endif %}>
+              Extract topics
+            </button>
+          </div>
+        </form>
+        {% if not readable_pages %}
+          <p class="caption">None of the uploaded pages could be read yet, so there is
+             nothing to extract from.</p>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="stack">
+        {% for chapter in chapters %}
+          {% include "courses/partials/topic_card.html" with topic=chapter course=course is_chapter=True %}
+        {% endfor %}
+
+        {% if orphans %}
+          <h3 class="section-title" style="margin-block-start: var(--space-8);">
+            Sub-topics without a chapter
+          </h3>
+          <p class="caption">Their chapter was deleted. They are still yours to keep, re-file or remove.</p>
+          {% for topic in orphans %}
+            {% include "courses/partials/topic_card.html" with topic=topic course=course is_chapter=False %}
+          {% endfor %}
+        {% endif %}
+      </div>
+
+      <div class="card" style="margin-block-start: var(--space-8);">
+        <h3 class="section-title">Merge two topics</h3>
+        <p class="caption">
+          Tick exactly two above, then merge. The one earlier in the list survives and
+          keeps both page spans, terms and examples; rename it afterwards if it needs it.
+        </p>
+        <div class="action-bar">
+          <button type="submit" form="merge-form" class="btn btn--secondary">Merge selected</button>
+        </div>
+      </div>
+    {% endif %}
+  </section>
+
+  <aside class="stack--loose">
+    <div class="card" aria-labelledby="add-heading">
+      <h2 id="add-heading" class="section-title">Add a topic</h2>
+      <p class="caption">
+        For something you teach that the material does not cover — إحكام cannot know
+        about it, and you can add it without a page reference.
+      </p>
+      <form method="post" action="{% url 'courses:topic_add' course.pk %}" novalidate>
+        {% csrf_token %}
+        {% if add_form.non_field_errors %}
+          <ul class="errorlist">
+            {% for error in add_form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        {% for field in add_form %}
+          {% include "partials/field.html" with field=field %}
+        {% endfor %}
+        <div class="action-bar">
+          <button type="submit" class="btn btn--primary">Add topic</button>
+        </div>
+      </form>
+    </div>
+
+    {% if topic_total %}
+      <div class="card" aria-labelledby="rerun-heading">
+        <h2 id="rerun-heading" class="section-title">Extract again</h2>
+        <p class="caption">
+          Re-reads the material and <strong>replaces this whole list</strong>. Everything you
+          renamed, added, merged or excluded is lost. Do this after uploading new material,
+          not to tidy up.
+        </p>
+        <form method="post" action="{% url 'courses:topics_extract' course.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="replace" value="yes">
+          <div class="action-bar">
+            <button type="submit" class="btn btn--danger">Replace all topics</button>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

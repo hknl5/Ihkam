@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Course, SourceFile
+from .models import Course, SourceFile, Topic
 
 #: Upload ceiling. Lecture decks are big; scanned books are not our problem yet.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -71,3 +71,94 @@ class SourceFileUploadForm(forms.ModelForm):
         if commit:
             source_file.save()
         return source_file
+
+
+class TopicForm(forms.ModelForm):
+    """Adding a topic by hand, on the review screen (M2).
+
+    An instructor adding a topic is stating a fact about their own teaching, so
+    only the name is required: they may well be adding something the material
+    never covered, which is precisely why no page reference is demanded.
+    """
+
+    class Meta:
+        model = Topic
+        fields = ("name", "parent", "source_file", "page_start", "page_end")
+        labels = {
+            "name": "Topic name",
+            "parent": "Chapter it belongs to",
+            "source_file": "Found in",
+            "page_start": "First page",
+            "page_end": "Last page",
+        }
+        help_texts = {
+            "parent": "Leave blank to add it as a chapter of its own.",
+            "source_file": "Optional — leave blank for something you teach that "
+            "the uploaded material does not cover.",
+        }
+        widgets = {
+            "name": forms.TextInput(attrs={"placeholder": "Bayes' theorem"}),
+            "page_start": forms.NumberInput(attrs={"min": 1}),
+            "page_end": forms.NumberInput(attrs={"min": 1}),
+        }
+
+    def __init__(self, *args, course=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.course = course
+        if course is not None:
+            self.fields["parent"].queryset = course.topics.chapters()
+            self.fields["source_file"].queryset = course.files.all()
+        self.fields["parent"].required = False
+        self.fields["source_file"].required = False
+        self.fields["parent"].empty_label = "— none, this is a chapter —"
+        self.fields["source_file"].empty_label = "— not in the uploaded material —"
+
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        if not name:
+            raise forms.ValidationError("Give the topic a name.")
+        return name
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("page_start"), cleaned.get("page_end")
+        if start and end and end < start:
+            raise forms.ValidationError("The last page comes before the first page.")
+        if end and not start:
+            raise forms.ValidationError("Give a first page as well as a last page.")
+        source_file = cleaned.get("source_file")
+        if source_file and start and start > source_file.page_count:
+            raise forms.ValidationError(
+                f"{source_file.original_name} has only {source_file.page_count} pages."
+            )
+        return cleaned
+
+    def save(self, commit=True):
+        topic = super().save(commit=False)
+        if self.course is not None:
+            topic.course = self.course
+            # New topics go to the end of the list, where the instructor left off.
+            topic.position = (
+                self.course.topics.order_by("-position")
+                .values_list("position", flat=True)
+                .first()
+                or 0
+            ) + 1
+        if commit:
+            topic.save()
+        return topic
+
+
+class TopicRenameForm(forms.ModelForm):
+    """Just the name. Renaming is the most common edit on this screen and must
+    never risk touching anything else on the row."""
+
+    class Meta:
+        model = Topic
+        fields = ("name",)
+
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        if not name:
+            raise forms.ValidationError("A topic needs a name.")
+        return name

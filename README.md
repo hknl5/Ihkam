@@ -3,9 +3,11 @@
 Intelligent agentic system for exam generation and review.
 إحكام prepares the draft and surfaces imbalances. **The final decision always belongs to the instructor.**
 
-Build status: **M1 complete** — M0 (skeleton, instructor auth, the `LLMProvider`
-abstraction §3, the design system §5) plus courses, file upload and PDF text
-extraction with page numbers preserved. Nothing from M2 onward exists yet.
+Build status: **M2 complete** — M0 (skeleton, instructor auth, the `LLMProvider`
+abstraction §3, the design system §5), M1 (courses, file upload and PDF text
+extraction with page numbers preserved, plus OCR), and M2 (topic extraction, the
+instructor topic-review screen, and chunks + embeddings in `pgvector`). Nothing
+from M3 onward exists yet — there is no retrieval, blueprint or agent.
 
 ## Requirements
 
@@ -139,4 +141,69 @@ like).
 ```bash
 uv run python manage.py test          # everything (needs PostgreSQL)
 uv run python manage.py test tests.test_provider   # no DB, no network
+```
+
+## Topics and chunks (M2)
+
+### The topic list is a draft until the instructor confirms it
+
+`courses/services/topics.py` sends the course's **readable** pages through
+`get_provider()` (never an SDK directly), asks for JSON, and validates it twice
+before a row is written:
+
+1. **Shape**, with Pydantic. A malformed answer is retried **once**, then
+   surfaced as an error — unvalidated output never reaches the database. A call
+   that never got to the model (no key, no credit, rate limit) is reported as
+   *that*, not as a bad answer, and is not retried.
+2. **Truth about the material**, in `_resolve_file` / `_resolve_span`. A file
+   name must be a file this course really has, and a page span must overlap the
+   pages actually sent. A span reaching past them is narrowed to the real part;
+   one that is entirely invented is dropped rather than stored. A hallucinated
+   citation is the failure this system exists to prevent.
+
+Then the instructor reviews it at `/courses/<id>/topics/` — rename, merge two,
+delete, add by hand, or mark **"not taught in lectures"**. This is a required
+product step, not a convenience screen.
+
+- **Excluded topics never flow downstream.** `Topic.objects.included()` and
+  `Chunk.objects.usable()` are the only ways anything later reads them.
+- **Deleting a chapter promotes its sub-topics** rather than deleting them —
+  removing a heading is not a request to lose what is filed under it.
+- **Merging keeps everything both topics knew**: the combined page span (when
+  both cite the same file), de-duplicated terms/formulas/examples, re-parented
+  sub-topics, re-pointed chunks. The survivor keeps its own name.
+- **Re-extraction replaces the whole list** and says so before it runs, behind
+  a separate "Replace all topics" button.
+
+### Content source discipline
+
+Only readable pages contribute — `ExtractedPage.is_readable` is the single
+definition, shared by extraction and chunking. A page with no text layer that
+OCR could not recover contributes nothing to either; letting its leftover slide
+number into the prompt would invite a topic invented out of a page number.
+OCR'd pages **are** used, labelled `(OCR transcription)` in the prompt, and the
+prompt tells the model that text is a reading of a picture rather than a text
+layer — not more authoritative than one.
+
+### Chunks + embeddings
+
+`courses/services/chunking.py` splits each readable page into passages and
+stores one embedding per passage in `chunks` (`pgvector`), through the same
+`embed()` the `llm_ping` command uses.
+
+- **A passage never crosses a page boundary.** Every citation is only as good
+  as the page number on the passage it quotes.
+- **Provenance is recorded** per chunk (`text_layer` vs `ocr`), so later
+  milestones know what they are quoting.
+- **The width is checked against `EMBEDDING_DIM` before anything is stored.** A
+  provider quietly returning its native size would make every stored vector
+  incomparable, and the damage would not appear until retrieval in M3.
+- Chunks are attached to topics **deterministically, by page span** — the
+  narrowest claim wins, and a passage no topic claims keeps `topic = None`.
+
+Chunking runs at the end of upload. `EMBEDDINGS_ENABLED=false` skips it (the
+test suite does this, so the suite spends no API calls):
+
+```bash
+uv run python manage.py build_chunks --course CS310   # or --all
 ```

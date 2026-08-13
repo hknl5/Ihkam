@@ -136,7 +136,7 @@ class ExtractionTests(TestCase):
                 extract_pages(io.BytesIO(b"anything"), kind)
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False, EMBEDDINGS_ENABLED=False)
 class UploadFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("nadia", password="quiet-precision-42")
@@ -353,7 +353,7 @@ def _png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=False, EMBEDDINGS_ENABLED=False)
 class ImageOnlyPageTests(TestCase):
     """The reported bug: pages whose content is a screenshot came back as the
     slide number and were reported as fully extracted."""
@@ -424,7 +424,7 @@ class FakeOCRProvider:
         return OCRResult(text=self.text, provider=self.name, model=self.model)
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True, EMBEDDINGS_ENABLED=False)
 class OCRIntegrationTests(TestCase):
     """OCR runs inline on upload and fills the pages extraction could not read."""
 
@@ -539,7 +539,7 @@ class OCRIntegrationTests(TestCase):
         self.assertFalse(source_file.pages.filter(source=ExtractedPage.Source.OCR).exists())
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True, EMBEDDINGS_ENABLED=False)
 class OCRQuotaTests(TestCase):
     """A spent daily quota stops the pass instead of grinding through it."""
 
@@ -688,7 +688,7 @@ def make_mixed_pdf() -> bytes:
     return buffer.getvalue()
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True, EMBEDDINGS_ENABLED=False)
 class MixedPageTests(TestCase):
     """A page whose title reads and whose body is an image (case b)."""
 
@@ -761,7 +761,7 @@ class MixedPageTests(TestCase):
         self.assertContains(response, "Logical Gates")
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True)
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), OCR_ENABLED=True, EMBEDDINGS_ENABLED=False)
 class DefectiveFontPageTests(TestCase):
     """A page with a full text layer of font junk (case c).
 

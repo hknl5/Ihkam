@@ -205,4 +205,34 @@ OCR_MIN_KEEP_RATIO = float(env("OCR_MIN_KEEP_RATIO", "0.6"))
 
 # Embedding dimension the app stores in pgvector. Providers are asked to emit
 # this width so switching providers does not invalidate stored vectors.
+#
+# Changing it after the first migration is a schema change, not a config
+# change: `Chunk.embedding` is a fixed-width column, so a new value needs a
+# migration and a re-embed of everything already stored.
 EMBEDDING_DIM = int(env("EMBEDDING_DIM", "1536"))
+
+# --- Chunking + embeddings (M2, see courses/services/chunking.py) -----------
+
+# Chunking runs at the end of ingest, so a file is retrievable as soon as it is
+# readable. Turn it off to upload without spending embedding calls (the test
+# suite does this); pages then simply have no chunks until they are rebuilt.
+EMBEDDINGS_ENABLED = env_bool("EMBEDDINGS_ENABLED", True)
+
+# A passage never crosses a page boundary — a citation is only as good as the
+# page number on the passage it came from. Within a page, paragraphs are packed
+# up to the maximum; a paragraph on its own below the minimum is joined to the
+# next rather than becoming a chunk of one line. Slide decks mostly produce one
+# chunk per page at these sizes; dense document pages produce two or three.
+CHUNK_MAX_CHARS = int(env("CHUNK_MAX_CHARS", "1200"))
+CHUNK_MIN_CHARS = int(env("CHUNK_MIN_CHARS", "200"))
+
+# Passages per embedding request. Only affects how many round trips a file
+# costs, never what is stored.
+EMBED_BATCH_SIZE = int(env("EMBED_BATCH_SIZE", "64"))
+
+# --- Topic extraction (M2, see courses/services/topics.py) ------------------
+
+# Ceiling on the course text sent in one extraction call. A file over the
+# ceiling is not silently truncated: the pages that did not fit are named in
+# the result, so the instructor knows which part of the syllabus was read.
+TOPIC_EXTRACTION_MAX_CHARS = int(env("TOPIC_EXTRACTION_MAX_CHARS", "150000"))

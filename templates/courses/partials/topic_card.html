@@ -1,0 +1,113 @@
+{% comment %}
+One topic on the review screen, with every edit it allows. Included with
+`topic`, `course` and `is_chapter`; it includes itself for a chapter's
+sub-topics, which is why the guard below checks both.
+
+The decision rail (§5) carries the topic's state; the status line beside it
+says the same thing in words, because color is never the only signal.
+
+Written with {% templatetag openblock %} comment {% templatetag closeblock %}
+rather than a hash comment: Django's {# #} cannot span lines, and a multi-line
+one leaves its contents live — which, in a self-including template, recurses
+until the stack runs out.
+{% endcomment %}
+<article class="card card--rail topic-card {% if topic.excluded %}is-attention{% endif %}"
+         id="topic-{{ topic.pk }}">
+  <div class="topic-card__head">
+    <div class="stack--tight" style="flex: 1 1 20rem;">
+      <form method="post" action="{% url 'courses:topic_rename' course.pk topic.pk %}"
+            class="topic-rename">
+        {% csrf_token %}
+        <label class="visually-hidden" for="name-{{ topic.pk }}">
+          Name of {% if is_chapter %}chapter{% else %}sub-topic{% endif %} “{{ topic.name }}”
+        </label>
+        <input type="text" id="name-{{ topic.pk }}" name="name" value="{{ topic.name }}"
+               dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}
+               maxlength="300" required
+               class="topic-rename__input {% if is_chapter %}is-chapter{% endif %}">
+        <button type="submit" class="btn btn--ghost">Rename</button>
+      </form>
+
+      <p class="caption">
+        {% if is_chapter %}Chapter{% else %}Sub-topic{% endif %}
+        {% if topic.source_file %}
+          · <a href="{{ topic.source_file.get_absolute_url }}{% if topic.page_start %}?page={{ topic.page_start }}{% endif %}"
+               dir="auto">{{ topic.source_file.original_name }}</a>
+          {% if topic.page_span %}· <span class="num">{{ topic.page_span }}</span>{% endif %}
+        {% else %}
+          · no page reference — added by hand
+        {% endif %}
+      </p>
+
+      {% if topic.excluded %}
+        <p class="status status--warn">Not taught in lectures — excluded from everything downstream</p>
+      {% else %}
+        <p class="status status--ok">In the syllabus</p>
+      {% endif %}
+
+      {% if topic.detail_counts %}
+        <p class="caption">
+          {% for label, count in topic.detail_counts %}<span class="num">{{ count }}</span> {{ label }}{% if not forloop.last %} · {% endif %}{% endfor %}
+        </p>
+      {% endif %}
+    </div>
+
+    <div class="topic-card__actions">
+      <label class="pick">
+        <input type="checkbox" name="topic" value="{{ topic.pk }}" form="merge-form">
+        <span>Merge<span class="visually-hidden"> “{{ topic.name }}”</span></span>
+      </label>
+
+      <form method="post" action="{% url 'courses:topic_exclude' course.pk topic.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--ghost">
+          {% if topic.excluded %}Put back{% else %}Not taught{% endif %}
+          <span class="visually-hidden">— “{{ topic.name }}”</span>
+        </button>
+      </form>
+
+      <form method="post" action="{% url 'courses:topic_delete' course.pk topic.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--ghost">
+          Delete<span class="visually-hidden"> “{{ topic.name }}”</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {% if topic.key_terms or topic.definitions or topic.formulas or topic.examples %}
+    <details class="topic-detail">
+      <summary>What إحكام found under this topic</summary>
+      <div class="stack--tight"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %} dir="auto">
+        {% if topic.key_terms %}
+          <p class="caption"><strong>Terms:</strong> {{ topic.key_terms|join:" · " }}</p>
+        {% endif %}
+        {% if topic.definitions %}
+          <ul class="caption topic-detail__list">
+            {% for definition in topic.definitions %}
+              <li><strong>{{ definition.term }}</strong> — {{ definition.text }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if topic.formulas %}
+          <ul class="caption topic-detail__list">
+            {% for formula in topic.formulas %}<li><code>{{ formula }}</code></li>{% endfor %}
+          </ul>
+        {% endif %}
+        {% if topic.examples %}
+          <ul class="caption topic-detail__list">
+            {% for example in topic.examples %}<li>{{ example }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    </details>
+  {% endif %}
+
+  {% if is_chapter and topic.subtopics.all %}
+    <ul class="subtopics">
+      {% for subtopic in topic.subtopics.all %}
+        <li>{% include "courses/partials/topic_card.html" with topic=subtopic course=course is_chapter=False %}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</article>

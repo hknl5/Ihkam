@@ -1,6 +1,8 @@
-"""Course content: the material an exam is later drafted from (M1).
+"""Course content: the material an exam is later drafted from (M1 + M2).
 
-Topics, chunks and embeddings arrive in M2 — nothing here depends on the LLM.
+M1 is the file and its pages. M2 adds `Topic` — the editable syllabus the
+instructor confirms before anything is generated — and `Chunk`, one embedded
+passage per piece of readable page text, which Agent 1A retrieves from in M3.
 """
 
 from pathlib import Path
@@ -8,6 +10,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
+from pgvector.django import VectorField
 
 
 class Course(models.Model):
@@ -251,6 +254,22 @@ class ExtractedPage(models.Model):
         return self.source == self.Source.OCR
 
     @property
+    def is_readable(self) -> bool:
+        """Whether this page's text may be used as course content (M2).
+
+        One definition, used by both topic extraction and chunking, and the
+        same one `_finalize_extraction` counts with: there is text, and the
+        page is not the image whose only readable characters are its slide
+        number. A page OCR could not read keeps its flag and is excluded here —
+        letting an unread page contribute is exactly what flagging it prevents.
+
+        A partially-unread page *is* readable: what was extracted is real text,
+        it is simply not all of the page. It is marked as such in the reader,
+        and its chunks carry the page number, so the gap stays visible.
+        """
+        return bool(self.text.strip()) and not self.is_image_only
+
+    @property
     def is_partially_unread(self) -> bool:
         """Text was extracted, but not all of the page's content.
 
@@ -273,3 +292,178 @@ class ExtractedPage(models.Model):
                 "this page's embedded fonts do not map to real letters"
             ),
         }.get(self.ocr_reason, "extraction could not read this page in full")
+
+
+class TopicQuerySet(models.QuerySet):
+    def included(self):
+        """Topics that may flow downstream.
+
+        The instructor's "not taught in lectures" is a hard exclusion, not a
+        hint: an excluded topic never reaches retrieval, a blueprint row or a
+        generated question. Every downstream caller goes through this.
+        """
+        return self.filter(excluded=False)
+
+    def chapters(self):
+        return self.filter(parent__isnull=True)
+
+
+class Topic(models.Model):
+    """One chapter or sub-topic of a course's syllabus (M2).
+
+    Extracted by a model, then **confirmed by the instructor** — renamed,
+    merged, deleted, added to, or marked "not taught". Nothing here is trusted
+    until they have been through it, which is why `excluded` lives on the row
+    rather than being inferred.
+
+    A chapter is a topic with no parent; a sub-topic points at its chapter.
+    """
+
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="topics")
+    #: The parent chapter. Null for a chapter itself. Deleting a chapter
+    #: promotes its sub-topics rather than deleting them — an instructor
+    #: removing a heading is not asking to lose everything under it.
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="subtopics",
+    )
+    name = models.CharField(max_length=300)
+    #: Where in the uploaded material this topic was found. Null for a topic
+    #: the instructor added by hand — they know it is taught, and no page
+    #: reference is invented for it.
+    source_file = models.ForeignKey(
+        SourceFile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="topics",
+    )
+    page_start = models.PositiveIntegerField(null=True, blank=True)
+    page_end = models.PositiveIntegerField(null=True, blank=True)
+    #: "Not taught in lectures." Set by the instructor, honoured everywhere.
+    excluded = models.BooleanField(
+        default=False,
+        help_text="Not taught in lectures — never used to generate questions.",
+    )
+
+    # --- Detail the extraction found, kept with the topic it belongs to ------
+    # Stored rather than discarded so Agent 2A (M5) can ground a question in
+    # the course's own wording instead of re-reading the whole file. All four
+    # are lists of plain strings, except `definitions` which is
+    # [{"term": ..., "text": ...}].
+    key_terms = models.JSONField(default=list, blank=True)
+    definitions = models.JSONField(default=list, blank=True)
+    formulas = models.JSONField(default=list, blank=True)
+    examples = models.JSONField(default=list, blank=True)
+
+    #: Ordering within the course, so a merged or renamed list keeps the
+    #: reading order of the material rather than jumping around.
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = TopicQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["position", "pk"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @property
+    def is_chapter(self) -> bool:
+        return self.parent_id is None
+
+    @property
+    def page_span(self) -> str:
+        """"pages 3–7", "page 12", or "" when there is no reference."""
+        if self.page_start is None:
+            return ""
+        if self.page_end is None or self.page_end == self.page_start:
+            return f"page {self.page_start}"
+        return f"pages {self.page_start}–{self.page_end}"
+
+    @property
+    def status_tone(self) -> str:
+        """Maps to the design system's `.status--*` modifiers (§5)."""
+        return "warn" if self.excluded else "ok"
+
+    @property
+    def detail_counts(self) -> list[tuple[str, int]]:
+        """Non-empty detail groups, for the review screen's summary line."""
+        pairs = [
+            ("terms", len(self.key_terms or [])),
+            ("definitions", len(self.definitions or [])),
+            ("formulas", len(self.formulas or [])),
+            ("examples", len(self.examples or [])),
+        ]
+        return [(label, count) for label, count in pairs if count]
+
+
+class ChunkQuerySet(models.QuerySet):
+    def usable(self):
+        """Chunks that may be retrieved (M3 onwards).
+
+        A chunk attached to an excluded topic is out, the same way the topic
+        is. A chunk with no topic stays in: it is course material the
+        instructor never ruled out, only material no topic claimed.
+        """
+        return self.exclude(topic__excluded=True)
+
+
+class Chunk(models.Model):
+    """One embedded passage of readable page text (M2).
+
+    Chunks never cross a page boundary. That is deliberate: every citation the
+    system will later make ("source: page 14") is only as good as the page
+    number on the passage it came from, and a passage spanning two pages has no
+    honest answer to that question.
+    """
+
+    source_file = models.ForeignKey(SourceFile, on_delete=models.CASCADE, related_name="chunks")
+    #: 1-based page number, copied from `ExtractedPage.number` so a citation
+    #: survives even if the page row is later re-extracted.
+    page = models.PositiveIntegerField()
+    #: Position of this passage within its page, 0-based.
+    position = models.PositiveIntegerField(default=0)
+    text = models.TextField()
+    embedding = VectorField(dimensions=settings.EMBEDDING_DIM)
+    #: Where the underlying page text came from. An OCR transcription is a
+    #: model's reading of a picture, not a text layer, and later milestones are
+    #: entitled to know which one they are quoting.
+    source = models.CharField(
+        max_length=12,
+        choices=ExtractedPage.Source.choices,
+        default=ExtractedPage.Source.TEXT_LAYER,
+    )
+    #: The topic this passage falls under, matched deterministically by page
+    #: span after the instructor confirms the topic list. Null when no topic
+    #: claims the page — which is not an error, just an unclaimed passage.
+    topic = models.ForeignKey(
+        Topic,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chunks",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = ChunkQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["source_file_id", "page", "position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_file", "page", "position"], name="unique_chunk_position"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.source_file.original_name} · page {self.page} · #{self.position}"
+
+    @property
+    def is_from_ocr(self) -> bool:
+        return self.source == ExtractedPage.Source.OCR

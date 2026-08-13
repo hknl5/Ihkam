@@ -3,15 +3,21 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 
-from .forms import CourseForm, SourceFileUploadForm
-from .models import Course, SourceFile
+from .forms import CourseForm, SourceFileUploadForm, TopicForm, TopicRenameForm
+from .models import Course, SourceFile, Topic
 from .services.ingest import ingest_source_file
 
 
 def _own_course(request, pk) -> Course:
     """A course is only ever reachable by the instructor who owns it."""
     return get_object_or_404(Course, pk=pk, instructor=request.user)
+
+
+def _own_topic(request, pk, topic_pk) -> Topic:
+    return get_object_or_404(Topic, pk=topic_pk, course__pk=pk, course__instructor=request.user)
 
 
 @login_required
@@ -119,3 +125,206 @@ def file_delete(request, pk, file_pk):
         source_file.delete()
         messages.success(request, f"{name} removed.")
     return redirect(course)
+
+
+# --- M2: topic review -------------------------------------------------------
+#
+# A required product step, not a convenience screen. Nothing the model
+# extracted is trusted until the instructor has been through it, so every
+# action here is theirs: rename, merge, delete, add, exclude.
+
+
+def _topics_url(course) -> str:
+    return reverse("courses:topics", args=[course.pk])
+
+
+def _topics_context(course, add_form=None) -> dict:
+    """Everything the review screen shows, built once for both its entry points."""
+    from .services.topics import readable_page_count, unreadable_page_count
+
+    chapters = list(
+        course.topics.chapters()
+        .select_related("source_file")
+        .prefetch_related("subtopics__source_file")
+    )
+    total = course.topics.count()
+    excluded = course.topics.filter(excluded=True).count()
+    return {
+        "course": course,
+        "chapters": chapters,
+        # A sub-topic whose chapter was deleted is still the instructor's, so
+        # it is shown rather than silently missing from the screen.
+        "orphans": list(
+            course.topics.filter(parent__isnull=False)
+            .exclude(parent__in=[c.pk for c in chapters])
+            .select_related("source_file")
+        ),
+        "topic_total": total,
+        "excluded_count": excluded,
+        "included_count": total - excluded,
+        "add_form": add_form if add_form is not None else TopicForm(course=course),
+        "readable_pages": readable_page_count(course),
+        "unreadable_pages": unreadable_page_count(course),
+        "has_files": course.files.exists(),
+        "chunk_count": course.files.aggregate(n=Count("chunks"))["n"] or 0,
+    }
+
+
+@login_required
+def topics(request, pk):
+    """The topic review screen: what was extracted, and every way to fix it."""
+    course = _own_course(request, pk)
+    return render(request, "courses/topics.html", _topics_context(course))
+
+
+@login_required
+@require_POST
+def topics_extract(request, pk):
+    """Run extraction over the course's readable pages.
+
+    Replacing an existing list is a destructive act — it removes edits the
+    instructor made — so it only happens when the form says `replace=yes`,
+    which the screen only sends from a button that spells that out.
+    """
+    course = _own_course(request, pk)
+    from .services.topics import TopicExtractionError, extract_topics
+    from .services.chunking import link_chunks_to_topics
+
+    if course.topics.exists() and request.POST.get("replace") != "yes":
+        messages.warning(
+            request,
+            "This course already has topics. Use “Extract again” if you want to "
+            "replace them — your edits would not survive it.",
+        )
+        return redirect(_topics_url(course))
+
+    try:
+        run = extract_topics(course)
+    except TopicExtractionError as exc:
+        messages.error(request, str(exc))
+        return redirect(_topics_url(course))
+
+    link_chunks_to_topics(course)
+
+    note = (
+        f"{run.chapters} chapter{'s' if run.chapters != 1 else ''} and "
+        f"{run.subtopics} sub-topic{'s' if run.subtopics != 1 else ''} extracted from "
+        f"{run.pages_included} readable page{'s' if run.pages_included != 1 else ''}."
+    )
+    if run.pages_from_ocr:
+        note += (
+            f" {run.pages_from_ocr} of those pages were read by OCR, so their wording "
+            "is a transcription."
+        )
+    if run.pages_skipped:
+        note += f" {run.pages_skipped} unreadable page(s) contributed nothing."
+    if run.spans_dropped:
+        note += (
+            f" {run.spans_dropped} page reference(s) did not match a page in the "
+            "material and were dropped rather than stored."
+        )
+    if run.pages_over_budget:
+        note += (
+            f" {run.pages_over_budget} page(s) did not fit in one extraction call — "
+            "raise TOPIC_EXTRACTION_MAX_CHARS to include them."
+        )
+    messages.success(request, f"{note} Nothing here is confirmed until you say so.")
+    return redirect(_topics_url(course))
+
+
+@login_required
+@require_POST
+def topic_add(request, pk):
+    course = _own_course(request, pk)
+    form = TopicForm(request.POST, course=course)
+    if form.is_valid():
+        topic = form.save()
+        messages.success(request, f"“{topic.name}” added.")
+        return redirect(_topics_url(course))
+
+    # Re-render with the errors rather than losing what they typed.
+    return render(request, "courses/topics.html", _topics_context(course, form), status=400)
+
+
+@login_required
+@require_POST
+def topic_rename(request, pk, topic_pk):
+    course = _own_course(request, pk)
+    topic = _own_topic(request, pk, topic_pk)
+    was = topic.name
+    form = TopicRenameForm(request.POST, instance=topic)
+    if form.is_valid():
+        form.save()
+        messages.success(request, f"“{was}” renamed to “{topic.name}”.")
+    else:
+        messages.error(request, "A topic needs a name — nothing was changed.")
+    return redirect(_topics_url(course))
+
+
+@login_required
+@require_POST
+def topic_delete(request, pk, topic_pk):
+    course = _own_course(request, pk)
+    topic = _own_topic(request, pk, topic_pk)
+    from .services.topics import delete_topic
+
+    name = topic.name
+    promoted = delete_topic(topic)
+    note = f"“{name}” deleted."
+    if promoted:
+        note += (
+            f" Its {promoted} sub-topic{'s' if promoted != 1 else ''} "
+            f"{'were' if promoted != 1 else 'was'} kept, now listed as chapters."
+        )
+    messages.success(request, note)
+    return redirect(_topics_url(course))
+
+
+@login_required
+@require_POST
+def topic_exclude(request, pk, topic_pk):
+    """Mark a topic "not taught in lectures", or put it back."""
+    course = _own_course(request, pk)
+    topic = _own_topic(request, pk, topic_pk)
+    topic.excluded = not topic.excluded
+    topic.save(update_fields=["excluded", "updated_at"])
+    messages.success(
+        request,
+        f"“{topic.name}” marked as not taught — it will not be used to generate "
+        "questions."
+        if topic.excluded
+        else f"“{topic.name}” is back in the syllabus.",
+    )
+    return redirect(_topics_url(course))
+
+
+@login_required
+@require_POST
+def topics_merge(request, pk):
+    """Merge exactly two selected topics into one."""
+    course = _own_course(request, pk)
+    from .services.topics import merge_topics
+
+    selected = request.POST.getlist("topic")
+    if len(selected) != 2:
+        messages.warning(
+            request, "Select exactly two topics to merge — merging is a pairwise decision."
+        )
+        return redirect(_topics_url(course))
+
+    topics_to_merge = list(course.topics.filter(pk__in=selected))
+    if len(topics_to_merge) != 2:
+        messages.error(request, "One of those topics no longer exists.")
+        return redirect(_topics_url(course))
+
+    # The one earlier in the list survives, so the merged topic keeps the
+    # reading order of the material.
+    keep, absorb = sorted(topics_to_merge, key=lambda t: (t.position, t.pk))
+    absorbed_name = absorb.name
+    merge_topics(keep, absorb)
+    messages.success(
+        request,
+        f"“{absorbed_name}” merged into “{keep.name}”. Rename it if the combined "
+        "topic needs a different name.",
+    )
+    return redirect(_topics_url(course))

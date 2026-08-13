@@ -443,16 +443,28 @@ def _looks_truncated(transcription: str, page: ExtractedPage) -> bool:
     return got < had * _setting("OCR_MIN_KEEP_RATIO", 0.6)
 
 
-def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=None) -> SourceFile:
-    """Extract `source_file`, store its pages, and OCR the ones with no text.
+def ingest_source_file(
+    source_file: SourceFile,
+    *,
+    ocr_provider=None,
+    run_ocr=None,
+    run_chunking=None,
+    embed_provider=None,
+) -> SourceFile:
+    """Extract `source_file`, store its pages, OCR the unreadable ones, chunk it.
 
     Never raises for bad input: failure is recorded on the row (`status` +
     `status_detail`) and shown to the instructor; only a genuine bug
     propagates. OCR runs inline — a slide deck costs about a minute, which is
     the price of the file being readable when the instructor next looks at it.
 
-    Pass `run_ocr=False` (or set `OCR_ENABLED=false`) to skip the OCR pass;
-    pages then simply stay flagged as needing it.
+    Chunking (M2) runs last, after OCR, so the passages indexed are the final
+    text of each page rather than the fragment OCR was about to replace. It
+    cannot change the file's extraction status: a file whose pages read fine is
+    ready whether or not the embedding provider was reachable.
+
+    Pass `run_ocr=False` (or `OCR_ENABLED=false`) to skip the OCR pass, and
+    `run_chunking=False` (or `EMBEDDINGS_ENABLED=false`) to skip embedding.
     """
     try:
         with source_file.file.open("rb") as fh:
@@ -487,7 +499,31 @@ def ingest_source_file(source_file: SourceFile, *, ocr_provider=None, run_ocr=No
         run_ocr = getattr(settings, "OCR_ENABLED", False)
     run = ocr_pages_needing_it(source_file, ocr_provider) if run_ocr else OCRRun()
 
-    return _finalize_extraction(source_file, run)
+    _finalize_extraction(source_file, run)
+
+    if run_chunking is None:
+        run_chunking = getattr(settings, "EMBEDDINGS_ENABLED", False)
+    if run_chunking:
+        chunk_file(source_file, provider=embed_provider)
+    return source_file
+
+
+def chunk_file(source_file: SourceFile, *, provider=None):
+    """Build this file's passages and embeddings (M2).
+
+    Kept here so ingest has one obvious place to call it from, and so a failing
+    embedding provider is logged rather than raised: the file is extracted and
+    readable either way, and an instructor who cannot embed today should still
+    be able to read what they uploaded. `manage.py build_chunks` retries.
+    """
+    from .chunking import chunk_source_file
+
+    run = chunk_source_file(source_file, provider=provider)
+    if run.error:
+        logger.warning(
+            "No chunks built for %s: %s", source_file.original_name, run.error
+        )
+    return run
 
 
 def ocr_pages_needing_it(source_file: SourceFile, provider=None) -> OCRRun:

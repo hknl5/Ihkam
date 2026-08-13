@@ -199,6 +199,16 @@ Build:
 
 > **Chunking note:** during ingest, split text into passages and store an embedding per passage in a `chunks` table (`pgvector`). This is done now even though retrieval is tested in M3, because chunks must exist before Agent 1A can retrieve. Store `chunk(text, embedding, source_file, page, topic_fk_nullable)`.
 
+> **M2 technical decisions:**
+> - **`Topic` carries the detail it was extracted with** — `key_terms`, `definitions`, `formulas`, `examples` as JSON alongside name / parent / source file / page span / `excluded`. The prompt asks for all six things the brief names, and discarding four of them would only mean re-extracting them in M5.
+> - **Parent chapter is a self-FK**, so a chapter is a topic with no parent. Deleting a chapter **promotes** its sub-topics rather than taking them with it.
+> - **Page spans are verified against the pages actually sent**, not just parsed. A span reaching past them is narrowed to the real part; an entirely invented one is dropped. A file name the course has not got yields no citation at all.
+> - **Retry once, but only for a malformed answer.** A call that never reached the model (no key, no credit, rate limit) is surfaced as itself — reporting it as "bad JSON" sends the instructor to the wrong place, and a second call would fail identically.
+> - **`ExtractedPage.is_readable` is the one definition** of what may contribute, shared by extraction and chunking. OCR pages are used and labelled `(OCR transcription)`; unread pages contribute nothing.
+> - **A chunk never crosses a page boundary**, and records `source` (`text_layer` / `ocr`). Embedding width is checked against `EMBEDDING_DIM` before anything is stored.
+> - **Chunks are linked to topics deterministically by page span** (narrowest claim wins), so `Chunk.objects.usable()` can honour an exclusion without a model in the loop.
+> - **Re-extraction replaces the whole list**, behind a separate button that says so — an instructor's edits are never silently overwritten.
+
 ---
 
 ### STAGE 1 — Agent 1A: Analyze & Plan

@@ -21,7 +21,7 @@
 <ol class="stepper" aria-label="Where you are">
   <li class="is-done">Course</li>
   <li class="is-current">Upload</li>
-  <li>Topics</li>
+  <li><a href="{% url 'courses:topics' course.pk %}">Topics</a></li>
   <li>Blueprint</li>
   <li>Generate</li>
   <li>Review</li>
@@ -109,9 +109,24 @@
     </form>
 
     <p class="caption" style="margin-block-start: var(--space-4);">
-      Scanned or photographed PDFs have no text layer to read. Text recognition (OCR)
-      is not part of this version — upload a text-based PDF for now.
+      Pages with no text layer — scans, screenshots, slides whose body is one image —
+      are re-read by text recognition (OCR) during upload. Anything it still cannot
+      read is flagged rather than passed off as extracted.
     </p>
   </aside>
 </div>
+
+{% if files %}
+  <div class="card" style="margin-block-start: var(--space-8);">
+    <h2 class="section-title">Next: the topics</h2>
+    <p>
+      إحكام reads the material you uploaded and proposes the chapters and sub-topics it
+      finds. You confirm that list — rename, merge, delete, add, or mark what you do not
+      teach — before anything is generated from it.
+    </p>
+    <div class="action-bar">
+      <a class="btn btn--primary" href="{% url 'courses:topics' course.pk %}">Review topics</a>
+    </div>
+  </div>
+{% endif %}
 {% endblock %}

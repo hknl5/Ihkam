@@ -33,3 +33,6 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Claude Code worktrees from earlier milestones — local scratch, never committed.
+.claude/worktrees/
