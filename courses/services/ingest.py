@@ -11,11 +11,13 @@ embeddings belong to M2 and are deliberately absent.
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 import unicodedata
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -197,6 +199,31 @@ def _looks_image_only(page, text: str) -> bool:
 
 _PDFIUM_IMAGE = 3
 _PDFIUM_PATH = 2
+
+
+def render_page_png(fileobj, number: int, width: int | None = None) -> bytes:
+    """Rasterise one 1-based PDF page to a PNG, for OCR.
+
+    Rendering is kept here, next to extraction, because both answer the same
+    question about the same file — and it keeps the OCR provider free of any
+    knowledge of PDFs.
+    """
+    import pypdfium2 as pdfium
+
+    target_width = width or getattr(settings, "OCR_RENDER_WIDTH", 1600)
+    try:
+        document = pdfium.PdfDocument(fileobj)
+        page = document[number - 1]
+    except (IndexError, ValueError) as exc:
+        raise ExtractionError(f"This PDF has no page {number}.") from exc
+    except pdfium.PdfiumError as exc:
+        raise ExtractionError("This file could not be read as a PDF.") from exc
+
+    scale = max(0.5, min(6.0, target_width / max(page.get_width(), 1)))
+    image = page.render(scale=scale).to_pil()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def extract_pptx(fileobj) -> list[PageText]:

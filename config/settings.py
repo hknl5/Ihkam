@@ -139,6 +139,21 @@ GEMINI_EMBED_MODEL = env("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 AIRLLM_MODEL = os.getenv("AIRLLM_MODEL", "")
 AIRLLM_EMBED_MODEL = os.getenv("AIRLLM_EMBED_MODEL", "")
 
+# --- OCR provider (see agents/ocr.py) ---------------------------------------
+# Image-only pages are read by a vision-language model, not a classic OCR
+# engine: the material is Arabic + English and VLMs read Arabic far better.
+# gemini | paddlevl (paddlevl is the local phase-2 stub, not implemented yet)
+
+OCR_PROVIDER = env("OCR_PROVIDER", "gemini").strip().lower()
+
+# Reuses the Gemini key already configured above. Defaults to the same model
+# as LLM work, which is vision-capable.
+GEMINI_OCR_MODEL = os.getenv("GEMINI_OCR_MODEL", "").strip() or GEMINI_MODEL
+
+# Pages are rasterised at this width (px) before being sent for OCR. Wide
+# enough for small diagram labels, small enough to keep the request cheap.
+OCR_RENDER_WIDTH = int(env("OCR_RENDER_WIDTH", "1600"))
+
 # Embedding dimension the app stores in pgvector. Providers are asked to emit
 # this width so switching providers does not invalidate stored vectors.
 EMBEDDING_DIM = int(env("EMBEDDING_DIM", "1536"))
