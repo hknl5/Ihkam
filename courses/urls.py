@@ -22,3 +22,9 @@ urlpatterns += [
     path("courses/<int:pk>/topics/<int:topic_pk>/delete/", views.topic_delete, name="topic_delete"),
     path("courses/<int:pk>/topics/<int:topic_pk>/exclude/", views.topic_exclude, name="topic_exclude"),
 ]
+
+# M3 — the retrieval debug screen. A diagnostic, not part of the instructor
+# flow: it shows the passages the generator would be handed, and nothing else.
+urlpatterns += [
+    path("courses/<int:pk>/retrieval/", views.retrieval_debug, name="retrieval"),
+]

@@ -230,6 +230,34 @@ CHUNK_MIN_CHARS = int(env("CHUNK_MIN_CHARS", "200"))
 # costs, never what is stored.
 EMBED_BATCH_SIZE = int(env("EMBED_BATCH_SIZE", "64"))
 
+# --- Retrieval (M3, see courses/services/retrieval.py) ----------------------
+
+# How many passages one query may return, before the score floor is applied.
+# A blueprint row needs enough material to ground a question in, not a reading
+# list: 8 passages is roughly two pages of a slide deck.
+RETRIEVAL_TOP_K = int(env("RETRIEVAL_TOP_K", "8"))
+
+# Cosine similarity floor. Below it a passage is not a worse answer to the
+# query, it is a different subject, and padding the result out to TOP_K with
+# those is how unrelated chapters leak into a generated question.
+#
+# Measured over 12 queries on the three sample courses (discrete maths, the
+# Arabic guidelines, the OOP slides) with gemini-embedding-001 at 1536
+# dimensions. The absolute numbers are higher than they look: every passage in
+# one lecture file shares its subject, so nothing scores near zero. On-topic
+# passages land at 0.65-0.81; the first passage from a different chapter lands
+# at 0.55-0.65. 0.65 is the boundary between them.
+#
+# It is deliberately on the strict side of that boundary. A borderline relevant
+# passage is occasionally cut (a "constructor declaration" page at 0.647 on an
+# overloading query), which costs one reference; an unrelated chapter admitted
+# instead would ground a generated question in material the topic does not
+# cover, which is the failure M3 exists to prevent.
+#
+# It is a per-corpus number, not a universal one — re-measure it if the
+# embedding model or EMBEDDING_DIM changes.
+RETRIEVAL_MIN_SCORE = float(env("RETRIEVAL_MIN_SCORE", "0.65"))
+
 # --- Topic extraction (M2, see courses/services/topics.py) ------------------
 
 # Ceiling on the course text sent in one extraction call. A file over the

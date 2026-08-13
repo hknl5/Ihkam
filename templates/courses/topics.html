@@ -127,6 +127,19 @@
         </div>
       </div>
     {% endif %}
+
+    {% if chunk_count %}
+      <div class="card" style="margin-block-start: var(--space-6);">
+        <h3 class="section-title">Check what a topic retrieves</h3>
+        <p class="caption">
+          See the passages إحكام would work from for any topic here — and confirm the
+          ones you marked “not taught” are nowhere in them.
+        </p>
+        <div class="action-bar">
+          <a class="btn btn--secondary" href="{% url 'courses:retrieval' course.pk %}">Open retrieval</a>
+        </div>
+      </div>
+    {% endif %}
   </section>
 
   <aside class="stack--loose">

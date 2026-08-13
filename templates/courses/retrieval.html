@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Retrieval — {{ course.code }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <span>Retrieval</span>
+</nav>
+
+<div class="page-head">
+  <h1>Retrieval</h1>
+  <p>
+    What إحكام would hand a generator for one topic or question. Ask for a topic,
+    see the exact passages it would work from — and the ones it would not.
+    A diagnostic screen: nothing here is saved or generated.
+  </p>
+</div>
+
+<dl class="tally" aria-label="What is searched">
+  <div>
+    <dt>Passages searched</dt>
+    <dd><span class="num">{{ usable_count }}</span> of <span class="num">{{ chunk_count }}</span> indexed</dd>
+  </div>
+  <div>
+    <dt>Returns at most</dt>
+    <dd><span class="num">{{ top_k }}</span> passages</dd>
+  </div>
+  <div>
+    <dt>Score floor</dt>
+    <dd><span class="num">{{ min_score }}</span> — weaker matches are cut, not padded</dd>
+  </div>
+</dl>
+
+{% if excluded_count %}
+  <div class="banner banner--info" role="status">
+    <span class="banner__label">Excluded.</span>
+    <span>
+      <span class="num">{{ excluded_count }}</span>
+      passage{{ excluded_count|pluralize }} sit under a topic you marked “not taught”.
+      They are filtered out before ranking, so they cannot be returned here and
+      cannot reach a question.
+    </span>
+  </div>
+{% endif %}
+
+<form class="card query-bar" method="get" action="{% url 'courses:retrieval' course.pk %}"
+      style="margin-block-start: var(--space-8);">
+  <div class="field">
+    <label for="q">Question or phrase</label>
+    <input type="search" id="q" name="q" value="{{ q }}" dir="auto"
+           placeholder="e.g. how truth tables prove logical equivalence">
+  </div>
+  <div class="field">
+    <label for="topic">…or a topic</label>
+    <select id="topic" name="topic" dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>
+      <option value="">— none —</option>
+      {% for t in topics %}
+        <option value="{{ t.pk }}"{% if selected_topic.pk == t.pk %} selected{% endif %}>
+          {% if t.parent %}— {% endif %}{{ t.name }}{% if t.excluded %} (not taught){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="action-bar">
+    <button type="submit" class="btn btn--primary">Retrieve</button>
+    <a class="btn btn--ghost" href="{% url 'courses:topics' course.pk %}">Topics</a>
+  </div>
+</form>
+
+{% if ran %}
+  <p class="caption" style="margin-block-start: var(--space-4);">
+    Embedded as: <span dir="auto">“{{ query_text }}”</span>
+    {% if selected_topic %}— a topic is searched by its name and key terms, not by its stored vector.{% endif %}
+  </p>
+{% endif %}
+
+{% if error %}
+  <div class="banner banner--danger" role="status">
+    <span class="banner__label">Retrieval failed.</span>
+    <span>{{ error }}</span>
+  </div>
+{% endif %}
+
+{% if selected_topic.excluded %}
+  <div class="banner banner--warn" role="status">
+    <span class="banner__label">Not taught.</span>
+    <span>
+      You marked this topic as not taught in lectures. Its own passages are out of
+      the index, so anything below came from elsewhere in the course.
+    </span>
+  </div>
+{% endif %}
+
+{% if ran and not error %}
+  <section aria-labelledby="results-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="results-heading" class="section-title">
+      Retrieved passages
+      {% if passages %}<span class="num">({{ passages|length }})</span>{% endif %}
+    </h2>
+
+    {% if passages %}
+      <ol class="stack" style="list-style: none;">
+        {% for p in passages %}
+          <li class="card passage">
+            <div class="passage__rank">
+              <b>#{{ forloop.counter }}</b>
+              <span title="Cosine similarity">{{ p.score_display }}</span>
+            </div>
+            <div class="passage__body">
+              <p class="passage__meta">
+                <span class="file-name" dir="auto">{{ p.source_file }}</span>
+                <span>page <span class="num">{{ p.page }}</span></span>
+                {% if p.topic %}
+                  <span class="status status--ok" dir="auto">{{ p.topic }}</span>
+                {% else %}
+                  <span class="status status--candidate">No topic claims this page</span>
+                {% endif %}
+                {% if p.from_ocr %}
+                  <span class="status status--info">Read by OCR</span>
+                {% endif %}
+              </p>
+              <div class="passage__text" dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>{{ p.text }}</div>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <div class="empty-state">
+        <h2>Nothing scored above the floor</h2>
+        <p>
+          No passage in this course scored <span class="num">{{ min_score }}</span> or higher
+          against that query. Either the material does not cover it, or the wording is
+          further from the pages than it looks — try the topic's own vocabulary.
+          A short result is the honest answer; retrieval does not pad it out.
+        </p>
+      </div>
+    {% endif %}
+  </section>
+{% elif not error %}
+  <div class="empty-state" style="margin-block-start: var(--space-8);">
+    <h2>Ask for something</h2>
+    <p>Type a question, or pick a topic, to see the passages it would be answered from.</p>
+  </div>
+{% endif %}
+{% endblock %}

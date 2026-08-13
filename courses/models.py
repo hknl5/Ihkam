@@ -410,8 +410,15 @@ class ChunkQuerySet(models.QuerySet):
         A chunk attached to an excluded topic is out, the same way the topic
         is. A chunk with no topic stays in: it is course material the
         instructor never ruled out, only material no topic claimed.
+
+        Exclusion is inherited by sub-topics. An instructor who marks a chapter
+        "not taught" has not said "except section 1.1", and without this a
+        passage on a page the chapter covers would still be retrievable
+        whenever a sub-topic claimed that page more narrowly — which is exactly
+        what `link_chunks_to_topics` does. One level is the whole tree: a
+        chapter has no parent, so nothing nests deeper.
         """
-        return self.exclude(topic__excluded=True)
+        return self.exclude(topic__excluded=True).exclude(topic__parent__excluded=True)
 
 
 class Chunk(models.Model):

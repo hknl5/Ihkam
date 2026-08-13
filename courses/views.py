@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -7,7 +8,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from .forms import CourseForm, SourceFileUploadForm, TopicForm, TopicRenameForm
-from .models import Course, SourceFile, Topic
+from .models import Chunk, Course, SourceFile, Topic
 from .services.ingest import ingest_source_file
 
 
@@ -296,6 +297,64 @@ def topic_exclude(request, pk, topic_pk):
         else f"“{topic.name}” is back in the syllabus.",
     )
     return redirect(_topics_url(course))
+
+
+@login_required
+def retrieval_debug(request, pk):
+    """M3: the passages retrieval would hand the generator, and their scores.
+
+    A diagnostic screen. It exists so retrieval can be judged on real material
+    before anything is generated from it — if the wrong chapter shows up here,
+    it would have shown up inside a question later, where it is far harder to
+    see. GET-only: a query changes nothing, so it belongs in the URL and stays
+    shareable and re-runnable.
+    """
+    course = _own_course(request, pk)
+    from .services.retrieval import RetrievalError, retrieve
+
+    raw_query = (request.GET.get("q") or "").strip()
+    topic_pk = (request.GET.get("topic") or "").strip()
+
+    topics_for_pick = list(
+        course.topics.select_related("parent").order_by("position", "pk")
+    )
+    topic = next((t for t in topics_for_pick if str(t.pk) == topic_pk), None)
+
+    # A picked topic wins over stale free text left in the URL, so what ran is
+    # never ambiguous. Whichever it was, the composed query text is shown.
+    query = topic or raw_query
+    passages, error, ran = [], "", bool(topic or raw_query)
+    if ran:
+        try:
+            passages = retrieve(course, query)
+        except RetrievalError as exc:
+            error = str(exc)
+
+    from .services.retrieval import query_text_for
+
+    course_chunks = Chunk.objects.filter(source_file__course=course)
+    chunk_count = course_chunks.count()
+    usable_count = course_chunks.usable().count()
+
+    return render(
+        request,
+        "courses/retrieval.html",
+        {
+            "course": course,
+            "topics": topics_for_pick,
+            "q": raw_query,
+            "selected_topic": topic,
+            "query_text": query_text_for(query) if ran else "",
+            "passages": passages,
+            "error": error,
+            "ran": ran,
+            "top_k": settings.RETRIEVAL_TOP_K,
+            "min_score": settings.RETRIEVAL_MIN_SCORE,
+            "chunk_count": chunk_count,
+            "usable_count": usable_count,
+            "excluded_count": chunk_count - usable_count,
+        },
+    )
 
 
 @login_required

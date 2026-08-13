@@ -247,6 +247,7 @@ main { flex: 1; padding-block: var(--space-8) var(--space-12); }
 .field input[type="email"],
 .field input[type="password"],
 .field input[type="number"],
+.field input[type="search"],
 .field select,
 .field textarea {
   width: 100%;
@@ -538,4 +539,57 @@ table.data td.num { font-family: var(--font-mono); }
 @media (max-width: 40rem) {
   .subtopics { padding-inline-start: var(--space-3); }
   .topic-card__actions { width: 100%; }
+}
+
+/* ---------- M3: retrieval debug ---------- */
+
+/* A diagnostic screen, so the ranking itself is the layout: rank and score in
+   mono on the reading edge, the passage next to them. Clarity over polish. */
+.query-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+.query-bar .field { flex: 1 1 18rem; margin: 0; }
+
+.passage { display: flex; gap: var(--space-4); align-items: flex-start; }
+.passage + .passage { margin-block-start: var(--space-4); }
+
+/* The rank + score column. Fixed width so scores line up down the list and a
+   drop-off between passages is visible without reading the numbers. */
+.passage__rank {
+  flex: 0 0 4.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-align: center;
+  padding-block-start: var(--space-1);
+}
+.passage__rank b { display: block; font-size: var(--fs-body); color: var(--ink-900); }
+.passage__rank span { color: var(--ink-600); }
+
+.passage__body { flex: 1 1 0; min-width: 0; }
+.passage__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  font-size: var(--fs-caption);
+  color: var(--ink-600);
+  margin-block-end: var(--space-3);
+}
+.passage__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: var(--measure);
+  line-height: var(--lh-read);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+@media (max-width: 40rem) {
+  .passage { flex-wrap: wrap; }
+  .passage__rank { flex-basis: 100%; text-align: start; }
+  .passage__rank b { display: inline; margin-inline-end: var(--space-2); }
 }
