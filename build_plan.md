@@ -53,7 +53,8 @@ This plan is written to be handed **directly to a coding agent**. Each milestone
 ```
 ihkam/
 ├── manage.py
-├── requirements.txt
+├── pyproject.toml               # replaces requirements.txt (uv-managed)
+├── uv.lock
 ├── .env.example
 ├── config/                      # Django project (settings, urls, wsgi)
 │   ├── settings.py
@@ -74,6 +75,7 @@ ihkam/
 │   │   └── export.py            # PDF now, LMS formats later
 ├── agents/                      # the three agents + provider
 │   ├── provider.py             # LLMProvider interface + implementations
+│   ├── ocr.py                  # OCRProvider seam (Gemini vision / PaddleOCR-VL)
 │   ├── prompts/                # versioned prompt templates
 │   ├── analyze.py              # Agent 1A
 │   ├── generate.py             # Agent 2A
@@ -127,6 +129,8 @@ def get_provider() -> LLMProvider:
 - Embeddings go through `embed()` too, so the local switch covers retrieval and similarity as well.
 - Keep `LLM_PROVIDER`, model names, and keys in `.env`.
 
+**OCR follows the same pattern.** `agents/ocr.py` defines an `OCRProvider` seam shaped exactly like `LLMProvider`, selected by `OCR_PROVIDER`: Gemini vision now, with a local **PaddleOCR-VL** (full server model) stub in place for later.
+
 **Test for this milestone:** a tiny management command `python manage.py llm_ping` that runs one completion and one embedding and prints the result. Switch the env var between `openai` and `gemini` and confirm both work. **Success = both providers return valid JSON and a vector of the expected dimension.**
 
 ---
@@ -167,10 +171,18 @@ Build:
 Build:
 - `Course` model: name, code, level, content language.
 - `SourceFile` model + upload. Support **PDF** first (MVP scope); stub PowerPoint/Word/plain-text behind the same interface for later.
+- **Scope:** PDF text extraction via PDFium; automatic OCR for pages that are image-only, mixed (text + image body), or have defective-font junk; OCR runs synchronously on upload with parallel per-page calls, behind a swappable `OCRProvider`.
 - `courses/services/ingest.py`: extract text from PDF, normalize whitespace, keep page numbers (needed later for "source: Slide 3, Chapter 14"–style citations).
 
 **Manual test:** create a course, upload a real lecture PDF, view extracted text page by page.
-**Success check:** text extraction is legible and complete for a text-based PDF; page references are preserved. (Scanned PDFs → note as a known gap, defer OCR.)
+**Success check:** text extraction is legible and complete for a text-based PDF; page references are preserved. Scanned, mixed, and defective-font pages come back readable through OCR.
+
+> **M1 technical decisions:**
+> - **PDFium** chosen over pypdf/PyMuPDF — Apache-2.0 licence and noticeably better extraction on real lecture files.
+> - **Lam-alef ligature repair** on extracted Arabic text.
+> - **Gemini OCR** for image-only, mixed, and defective-font pages.
+> - **Defective-font pages keep their existing text layer** if OCR returns <60% of its length — a guard against losing body text to a partial transcription.
+> - **Greek letters excluded** from junk detection (they are legitimate content, not font damage).
 
 ---
 
@@ -482,7 +494,7 @@ Use the **three sample courses** — one theoretical, one math-heavy, one progra
 
 Once the API-key version is proven:
 1. Write `AirLLMProvider(LLMProvider)` implementing `complete()` and `embed()` against your AirLLM-served local model.
-2. Flip `LLM_PROVIDER=airllm` in `.env`.
+2. Flip `LLM_PROVIDER=airllm` in `.env`. At the same time, **PaddleOCR-VL replaces Gemini OCR** — flip `OCR_PROVIDER=paddlevl` so ingestion goes local too.
 3. Re-run the **M2, M5, M7, M10** validation checks on the three sample courses to confirm quality holds locally.
 4. No other code changes — that's the whole point of §3.
 
