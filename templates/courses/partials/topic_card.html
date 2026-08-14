@@ -11,7 +11,7 @@ rather than a hash comment: Django's {# #} cannot span lines, and a multi-line
 one leaves its contents live — which, in a self-including template, recurses
 until the stack runs out.
 {% endcomment %}
-<article class="card card--rail topic-card {% if topic.excluded %}is-attention{% endif %}"
+<article class="card card--rail topic-card {% if topic.excluded or parent_excluded %}is-attention{% endif %}"
          id="topic-{{ topic.pk }}">
   <div class="topic-card__head">
     <div class="stack--tight" style="flex: 1 1 20rem;">
@@ -39,8 +39,21 @@ until the stack runs out.
         {% endif %}
       </p>
 
+      {# A sub-topic inherits its chapter's exclusion (see `ChunkQuerySet.usable`),
+         so one whose chapter is not taught is out of the index too — even though
+         nothing was done to the sub-topic itself. It stays listed, because it is
+         still the instructor's, but it says so: a row that reads "in the syllabus"
+         and then contributes nothing to a single question is the exact confusion
+         this marker exists to prevent. #}
       {% if topic.excluded %}
         <p class="status status--warn">Not taught in lectures — excluded from everything downstream</p>
+      {% elif parent_excluded %}
+        <p class="status status--warn">
+          <span class="out-of-index">Out of index — parent chapter excluded</span>
+        </p>
+        <p class="caption">
+          Put its chapter back in the syllabus to use this sub-topic in a blueprint or a question.
+        </p>
       {% else %}
         <p class="status status--ok">In the syllabus</p>
       {% endif %}
@@ -106,7 +119,7 @@ until the stack runs out.
   {% if is_chapter and topic.subtopics.all %}
     <ul class="subtopics">
       {% for subtopic in topic.subtopics.all %}
-        <li>{% include "courses/partials/topic_card.html" with topic=subtopic course=course is_chapter=False %}</li>
+        <li>{% include "courses/partials/topic_card.html" with topic=subtopic course=course is_chapter=False parent_excluded=topic.excluded %}</li>
       {% endfor %}
     </ul>
   {% endif %}

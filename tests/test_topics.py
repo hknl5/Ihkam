@@ -571,3 +571,66 @@ class ExcludedTopicsTests(TestCase):
 
         self.assertEqual(Chunk.objects.filter(topic__isnull=True).count(),
                          Chunk.objects.usable().filter(topic__isnull=True).count())
+
+
+class OutOfIndexSubtopicTests(TestCase):
+    """A sub-topic under an excluded chapter stays visible, and says what it is.
+
+    The instructor's decision was about the chapter, so the sub-topic is not
+    hidden or deleted — but it inherits the exclusion (`ChunkQuerySet.usable`),
+    and a row that reads "in the syllabus" while contributing to nothing is the
+    exact confusion this marker was added to prevent.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("nadia", password=PASSWORD)
+        self.course = a_course(self.user)
+        # The review screen only lists topics once the course has material.
+        SourceFile.objects.create(
+            course=self.course, original_name="lecture.pdf", kind=SourceFile.Kind.PDF
+        )
+        self.chapter = Topic.objects.create(course=self.course, name="Chapter 3", position=0)
+        self.subtopic = Topic.objects.create(
+            course=self.course, name="3.1 Precision", parent=self.chapter, position=1
+        )
+        self.client.login(username="nadia", password=PASSWORD)
+
+    def _topics_page(self):
+        return self.client.get(reverse("courses:topics", args=[self.course.pk]))
+
+    def test_an_ordinary_subtopic_reads_as_in_the_syllabus(self):
+        response = self._topics_page()
+
+        self.assertContains(response, "3.1 Precision")
+        self.assertNotContains(response, "out of index")
+        self.assertContains(response, "In the syllabus")
+
+    def test_a_subtopic_of_an_excluded_chapter_is_still_listed(self):
+        self.chapter.excluded = True
+        self.chapter.save()
+
+        response = self._topics_page()
+
+        self.assertContains(response, "3.1 Precision")
+
+    def test_it_is_marked_out_of_index_rather_than_reading_as_ordinary(self):
+        self.chapter.excluded = True
+        self.chapter.save()
+
+        response = self._topics_page()
+
+        html = response.content.decode()
+        self.assertIn("Out of index — parent chapter excluded", html)
+        self.assertNotIn("In the syllabus", html)
+
+    def test_putting_the_chapter_back_clears_the_marker(self):
+        self.chapter.excluded = True
+        self.chapter.save()
+
+        self.client.post(
+            reverse("courses:topic_exclude", args=[self.course.pk, self.chapter.pk])
+        )
+
+        html = self._topics_page().content.decode()
+        self.assertNotIn("Out of index", html)
+        self.assertIn("In the syllabus", html)

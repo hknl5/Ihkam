@@ -24,7 +24,7 @@
   <li class="is-done">Course</li>
   <li class="is-done">Upload</li>
   <li class="is-current">Topics</li>
-  <li>Blueprint</li>
+  <li><a href="{% url 'exams:list' course.pk %}">Blueprint</a></li>
   <li>Generate</li>
   <li>Review</li>
 </ol>
@@ -124,6 +124,20 @@
         </p>
         <div class="action-bar">
           <button type="submit" form="merge-form" class="btn btn--secondary">Merge selected</button>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if topic_total %}
+      <div class="card" style="margin-block-start: var(--space-6);">
+        <h3 class="section-title">Next: plan an exam</h3>
+        <p class="caption">
+          Define what the exam is — how long, out of how much, how many questions — then
+          spread it across the <span class="num">{{ included_count }}</span> topic{{ included_count|pluralize }}
+          you teach. إحكام checks the arithmetic; the weighting is yours.
+        </p>
+        <div class="action-bar">
+          <a class="btn btn--primary" href="{% url 'exams:list' course.pk %}">Plan an exam</a>
         </div>
       </div>
     {% endif %}

@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Blueprint — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:list' course.pk %}">Exams</a>
+  <span aria-hidden="true">/</span>
+  <span dir="auto">{{ exam.display_title }}</span>
+</nav>
+
+<div class="page-head">
+  <h1>Blueprint</h1>
+  <p>
+    How this exam is spent across your topics. إحكام checks the arithmetic —
+    counts, marks and weights — as you type. What each topic is worth is yours.
+  </p>
+</div>
+
+<ol class="stepper" aria-label="Where you are">
+  <li class="is-done">Course</li>
+  <li class="is-done">Upload</li>
+  <li class="is-done">Topics</li>
+  <li class="is-current">Blueprint</li>
+  <li>Generate</li>
+  <li>Review</li>
+</ol>
+
+<dl class="tally" aria-label="This exam's specification">
+  <div>
+    <dt>Type</dt>
+    <dd>{{ exam.get_kind_display }}</dd>
+  </div>
+  <div>
+    <dt>Out of</dt>
+    <dd><span class="num">{{ exam.total_score }}</span> marks</dd>
+  </div>
+  <div>
+    <dt>Questions</dt>
+    <dd><span class="num">{{ exam.question_count }}</span></dd>
+  </div>
+  <div>
+    <dt>Duration</dt>
+    <dd><span class="num">{{ exam.duration_minutes }}</span> min</dd>
+  </div>
+  <div>
+    <dt>Forms</dt>
+    <dd><span class="num">{{ exam.number_of_forms }}</span></dd>
+  </div>
+  <div>
+    <dt>Language</dt>
+    <dd>{{ exam.get_language_display }}</dd>
+  </div>
+</dl>
+
+{% if not blueprint or not blueprint.rows.all %}
+  <div class="empty-state" style="margin-block-start: var(--space-8);">
+    <h2>No blueprint yet</h2>
+    {% if eligible_count %}
+      <p>
+        Build a first draft from the <span class="num">{{ eligible_count }}</span>
+        topic{{ eligible_count|pluralize }} this course teaches — weighted equally, adding up
+        exactly. Then change whatever you know better.
+      </p>
+      <form method="post" action="{% url 'exams:blueprint_autobuild' course.pk exam.pk %}">
+        {% csrf_token %}
+        <div class="action-bar" style="justify-content: center;">
+          <button type="submit" class="btn btn--primary">Build from topics</button>
+        </div>
+      </form>
+    {% else %}
+      <p>
+        This course has no topics a blueprint can draw on — they are either excluded or
+        sit under an excluded chapter. Review the topics first.
+      </p>
+      <div class="action-bar" style="justify-content: center;">
+        <a class="btn btn--secondary" href="{% url 'courses:topics' course.pk %}">Review topics</a>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<form method="post" id="bp-form" action="{% url 'exams:blueprint' course.pk exam.pk %}"
+      hx-post="{% url 'exams:blueprint_validate' course.pk exam.pk %}"
+      hx-trigger="input delay:300ms from:#bp-form, change from:#bp-form"
+      hx-target="#bp-totals"
+      hx-swap="outerHTML"
+      style="margin-block-start: var(--space-8);">
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  {% if formset.non_form_errors %}
+    <div class="banner banner--danger" role="status">
+      <span class="banner__label">Rows could not be saved.</span>
+      <span>{{ formset.non_form_errors|join:" " }}</span>
+    </div>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="data bp-table">
+      <caption class="visually-hidden">
+        Blueprint rows: topic, question type, level, question count, marks and weight.
+        The last row shows the totals and anything that does not add up.
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Topic</th>
+          <th scope="col">Type</th>
+          <th scope="col">Level</th>
+          <th scope="col">Questions</th>
+          <th scope="col">Marks</th>
+          <th scope="col">Weight %</th>
+          <th scope="col">Remove</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for form in formset %}
+          <tr class="{% if form.errors %}has-error{% endif %}">
+            {{ form.id }}
+            <td dir="auto">
+              <label class="visually-hidden" for="{{ form.topic.id_for_label }}">
+                Topic for row {{ forloop.counter }}
+              </label>
+              {{ form.topic }}
+              {% if form.topic.errors %}<p class="caption status status--danger">{{ form.topic.errors|join:" " }}</p>{% endif %}
+            </td>
+            <td>
+              <label class="visually-hidden" for="{{ form.question_type.id_for_label }}">
+                Question type for row {{ forloop.counter }}
+              </label>
+              {{ form.question_type }}
+            </td>
+            <td>
+              <label class="visually-hidden" for="{{ form.level.id_for_label }}">
+                Level for row {{ forloop.counter }}
+              </label>
+              {{ form.level }}
+            </td>
+            <td class="num">
+              <label class="visually-hidden" for="{{ form.count.id_for_label }}">
+                Question count for row {{ forloop.counter }}
+              </label>
+              {{ form.count }}
+            </td>
+            <td class="num">
+              <label class="visually-hidden" for="{{ form.marks.id_for_label }}">
+                Marks for row {{ forloop.counter }}
+              </label>
+              {{ form.marks }}
+            </td>
+            <td class="num">
+              <label class="visually-hidden" for="{{ form.weight_percent.id_for_label }}">
+                Weight percent for row {{ forloop.counter }}
+              </label>
+              {{ form.weight_percent }}
+            </td>
+            <td>
+              {% if form.instance.pk %}
+                <label class="pick">
+                  {{ form.DELETE }}
+                  <span>Remove<span class="visually-hidden"> row {{ forloop.counter }}</span></span>
+                </label>
+              {% else %}
+                <span class="caption">New row</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      {% include "exams/partials/blueprint_totals.html" %}
+    </table>
+  </div>
+
+  <p class="caption" style="margin-block-start: var(--space-3);">
+    The empty row at the bottom adds a topic — fill it in and save. Nothing is written
+    until you save; the totals above update as you type.
+  </p>
+
+  <div class="action-bar" style="margin-block-start: var(--space-4);">
+    <button type="submit" class="btn btn--primary">Save blueprint</button>
+    {% if blueprint and blueprint.rows.all %}
+      <a class="btn btn--secondary" href="{% url 'exams:plan' course.pk exam.pk %}">
+        Show reference passages
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+{% if blueprint and blueprint.rows.all %}
+  <div class="card" style="margin-block-start: var(--space-8);">
+    <h2 class="section-title">Rebuild from topics</h2>
+    <p class="caption">
+      Replaces every row with an equal split across this course's topics. Your
+      adjustments are lost — do this to start over, not to tidy up.
+    </p>
+    <form method="post" action="{% url 'exams:blueprint_autobuild' course.pk exam.pk %}">
+      {% csrf_token %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--danger">Rebuild blueprint</button>
+      </div>
+    </form>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block body_extra %}
+  {# Vendored, not from a CDN: live validation is behaviour, and behaviour this
+     screen depends on should not be one network hiccup from disappearing. #}
+  <script src="{% static 'js/htmx.min.js' %}" defer></script>
+{% endblock %}

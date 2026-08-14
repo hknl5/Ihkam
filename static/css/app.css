@@ -593,3 +593,73 @@ table.data td.num { font-family: var(--font-mono); }
   .passage__rank { flex-basis: 100%; text-align: start; }
   .passage__rank b { display: inline; margin-inline-end: var(--space-2); }
 }
+
+/* ---------- Blueprint editor (M4) ----------
+   An editable table. Inputs sit flush in their cells so the table still reads
+   as a table rather than as a wall of form controls, and the total row carries
+   the verdict — in color and in words, never in color alone. */
+
+.bp-table td { vertical-align: middle; }
+.bp-table select,
+.bp-table input[type="number"],
+.bp-table input[type="text"] {
+  width: 100%;
+  min-width: 6rem;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--ink-900);
+  background: var(--surface-card);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+.bp-table input[type="number"] { font-family: var(--font-mono); min-width: 5rem; }
+.bp-table select { min-width: 10rem; }
+.bp-table select:hover,
+.bp-table input:hover { border-color: var(--hairline); }
+.bp-table select:focus-visible,
+.bp-table input:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 1px;
+  border-color: var(--accent-500);
+}
+.bp-table tr.has-error td { background: color-mix(in srgb, var(--danger-600) 5%, transparent); }
+
+/* The first column stays put while the rest scrolls on a narrow screen. */
+.bp-table th:first-child,
+.bp-table td:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  background: var(--surface-card);
+  z-index: 1;
+}
+.bp-table thead th:first-child { background: var(--surface-sunken); z-index: 2; }
+
+.bp-totals th,
+.bp-totals td { background: var(--surface-sunken); border-block-end: none; }
+.bp-totals th:first-child { background: var(--surface-sunken); }
+.bp-totals > tr:first-child > * { border-block-start: 2px solid var(--hairline); }
+.bp-totals.is-broken > tr:first-child > * { border-block-start-color: var(--danger-600); }
+.bp-totals .status { white-space: nowrap; }
+.bp-totals__notes td { white-space: normal; padding-block-start: 0; }
+
+.bp-issues {
+  margin-block-start: var(--space-2);
+  padding-inline-start: var(--space-6);
+  list-style: disc;
+  color: var(--danger-600);
+  font-size: var(--fs-caption);
+}
+.bp-issues li { max-width: var(--measure); margin-block-start: var(--space-1); }
+
+/* A sub-topic still listed, but out of reach because its chapter is not taught. */
+.out-of-index {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--warn-600);
+  font-size: var(--fs-caption);
+}

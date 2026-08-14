@@ -1,0 +1,49 @@
+{% comment %}
+The total row (§5's blueprint editor): the one thing the instructor watches
+while typing. Rendered on load from the saved rows, and re-rendered by HTMX
+against unsaved input on every edit — the same `validate` either way.
+
+It is a <tfoot> and it is the whole HTMX target, so what is wrong and what the
+numbers add up to are swapped together and can never disagree.
+{% endcomment %}
+<tfoot id="bp-totals" class="bp-totals{% if report and not report.is_valid %} is-broken{% endif %}">
+  <tr>
+    <th scope="row">
+      Total
+      {% if live %}<span class="caption"> · unsaved</span>{% endif %}
+    </th>
+    <td colspan="2" class="caption">
+      {% if report.is_valid %}Everything adds up{% else %}Does not add up yet{% endif %}
+    </td>
+    <td class="num">
+      <span class="status status--{{ report.count_tone }}">
+        {{ report.total_count }} / {{ report.expected_count }}
+      </span>
+    </td>
+    <td class="num">
+      <span class="status status--{{ report.marks_tone }}">
+        {{ report.total_marks|floatformat:"-2" }} / {{ report.expected_marks }}
+      </span>
+    </td>
+    <td class="num">
+      <span class="status status--{{ report.weight_tone }}">
+        {{ report.total_weight|floatformat:"-2" }}% / 100%
+      </span>
+    </td>
+    <td></td>
+  </tr>
+  <tr class="bp-totals__notes">
+    <td colspan="7">
+      {% if report.is_valid %}
+        <p class="status status--ok">{{ report.summary }}</p>
+      {% else %}
+        <p class="status status--danger">{{ report.summary }}</p>
+        <ul class="bp-issues">
+          {% for issue in report.issues %}
+            <li dir="auto">{{ issue.message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </td>
+  </tr>
+</tfoot>

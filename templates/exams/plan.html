@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Reference passages — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:blueprint' course.pk exam.pk %}">Blueprint</a>
+  <span aria-hidden="true">/</span>
+  <span>Reference passages</span>
+</nav>
+
+<div class="page-head">
+  <h1>What each question will be written from</h1>
+  <p>
+    The end of Agent 1A: every question this blueprint plans, with the passages of your
+    own material it will be grounded in. No question has been written yet — this is the
+    plan being handed over, and it is the last point where the material can be corrected
+    before it is.
+  </p>
+</div>
+
+{% if error %}
+  <div class="banner banner--danger" role="status">
+    <span class="banner__label">Retrieval failed.</span>
+    <span dir="auto">{{ error }}</span>
+  </div>
+{% elif plan %}
+  <dl class="tally" aria-label="What was prepared">
+    <div>
+      <dt>Planned questions</dt>
+      <dd><span class="num">{{ plan.question_count }}</span> of {{ exam.question_count }}</dd>
+    </div>
+    <div>
+      <dt>Passage bundles</dt>
+      <dd><span class="num">{{ plan.question_count }}</span> — one per question</dd>
+    </div>
+    <div>
+      <dt>Passages attached</dt>
+      <dd><span class="num">{{ plan.passage_count }}</span> in total</dd>
+    </div>
+  </dl>
+
+  {% if plan.topics_without_passages %}
+    <div class="banner banner--warn" role="status">
+      <span class="banner__label">Nothing to write from.</span>
+      <span dir="auto">
+        This exam plans questions on {{ plan.topics_without_passages|join:", " }}, but the
+        uploaded material has no passage about
+        {{ plan.topics_without_passages|pluralize:"it,them" }} that scores above the
+        retrieval floor. Upload the material that covers
+        {{ plan.topics_without_passages|pluralize:"it,them" }}, or drop the row.
+      </span>
+    </div>
+  {% endif %}
+
+  <div class="stack" style="margin-block-start: var(--space-8);">
+    {% for question in plan.questions %}
+      <article class="card card--rail{% if not question.has_passages %} is-attention{% endif %}">
+        <p class="caption">
+          Question <span class="num">{{ forloop.counter }}</span> ·
+          <span dir="auto">{{ question.topic_name }}</span> ·
+          {{ question.question_type_label }} ·
+          {{ question.level_label }} ·
+          <span class="num">{{ question.marks|floatformat:"-2" }}</span> mark(s)
+        </p>
+
+        {% if question.has_passages %}
+          <details class="topic-detail">
+            <summary>
+              <span class="num">{{ question.passages|length }}</span> reference passage(s)
+            </summary>
+            <div class="stack--tight">
+              {% for passage in question.passages %}
+                <div class="passage">
+                  <span class="passage__rank num">{{ passage.score_display }}</span>
+                  <div>
+                    <p class="caption" dir="auto">{{ passage.page_ref }}{% if passage.from_ocr %} · OCR transcription{% endif %}</p>
+                    <p dir="auto"{% if course.content_lang_attr %} lang="{{ course.content_lang_attr }}"{% endif %}>
+                      {{ passage.text|truncatechars:320 }}
+                    </p>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </details>
+        {% else %}
+          <p class="status status--warn">
+            No passage of this course scored high enough to write this question from.
+          </p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<div class="action-bar" style="margin-block-start: var(--space-8);">
+  <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">Back to blueprint</a>
+</div>
+{% endblock %}

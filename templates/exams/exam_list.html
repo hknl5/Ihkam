@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Exams — {{ course.code }} — إحكام{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <span>Exams</span>
+</nav>
+
+<div class="page-head">
+  <h1>Exams</h1>
+  <p>
+    An exam is defined before it is planned: how long, out of how much, how many
+    questions, how many forms. Everything إحكام drafts afterwards is checked against
+    these numbers.
+  </p>
+</div>
+
+<ol class="stepper" aria-label="Where you are">
+  <li class="is-done">Course</li>
+  <li class="is-done">Upload</li>
+  <li class="is-done">Topics</li>
+  <li class="is-current">Exam</li>
+  <li>Blueprint</li>
+  <li>Generate</li>
+</ol>
+
+<div class="split" style="margin-block-start: var(--space-8);">
+  <section aria-labelledby="exams-heading">
+    <h2 id="exams-heading" class="section-title">Defined exams</h2>
+
+    {% if not exams %}
+      <div class="empty-state">
+        <h2>No exams yet</h2>
+        <p>
+          Define one on the right. You can plan it against the
+          <span class="num">{{ topic_count }}</span> topic{{ topic_count|pluralize }} this
+          course teaches as soon as it exists.
+        </p>
+      </div>
+    {% else %}
+      <div class="stack">
+        {% for exam in exams %}
+          <article class="card card--rail{% if not exam.has_blueprint %} is-attention{% endif %}">
+            <div class="topic-card__head">
+              <div class="stack--tight" style="flex: 1 1 20rem;">
+                <h3 class="section-title" dir="auto" style="margin: 0;">{{ exam.display_title }}</h3>
+                <p class="caption">
+                  {{ exam.get_kind_display }} ·
+                  <span class="num">{{ exam.question_count }}</span> questions ·
+                  <span class="num">{{ exam.total_score }}</span> marks ·
+                  <span class="num">{{ exam.duration_minutes }}</span> min ·
+                  <span class="num">{{ exam.number_of_forms }}</span> form{{ exam.number_of_forms|pluralize }} ·
+                  {{ exam.get_language_display }}
+                </p>
+                {% if exam.has_blueprint %}
+                  <p class="status status--ok">Blueprint started</p>
+                {% else %}
+                  <p class="status status--warn">No blueprint yet</p>
+                {% endif %}
+              </div>
+              <div class="topic-card__actions">
+                <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">
+                  {% if exam.has_blueprint %}Open blueprint{% else %}Plan it{% endif %}
+                  <span class="visually-hidden"> — {{ exam.display_title }}</span>
+                </a>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  <aside>
+    <div class="card" aria-labelledby="define-heading">
+      <h2 id="define-heading" class="section-title">Define an exam</h2>
+      <form method="post" novalidate>
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <ul class="errorlist">
+            {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        {% for field in form %}
+          {% include "partials/field.html" with field=field %}
+        {% endfor %}
+        <div class="action-bar">
+          <button type="submit" class="btn btn--primary">Define exam</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+</div>
+{% endblock %}
