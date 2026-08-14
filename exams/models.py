@@ -150,3 +150,68 @@ class BlueprintRow(models.Model):
         if not self.count:
             return Decimal("0")
         return (self.marks / self.count).quantize(Decimal("0.01"))
+
+
+class Question(models.Model):
+    """One generated question (M5), and the passage it was written from.
+
+    A row here is *a candidate* until an instructor says otherwise: Agent 2A
+    over-generates, Agent 3A (M7) reviews, and the instructor approves or
+    rejects. `status` is the only thing that separates a suggestion from a
+    question that will be on a paper, so it starts at `CANDIDATE` and is never
+    set by a model.
+
+    `source_ref` and `source_chunk` are the citation, kept as both the human
+    sentence ("OOP-lecture-3.pdf · page 7") and the link to the chunk it came
+    from — the first is what an instructor reads, the second is what lets a
+    review screen show the passage beside the question.
+
+    The answer lives on the same row as the stem (`correct`, `explanation`)
+    because M6's rule is that the key is produced *with* the question. M6 adds
+    the typed key formats on top of these; it never fills them in afterwards.
+    """
+
+    class Status(models.TextChoices):
+        CANDIDATE = "candidate", "Candidate"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name="questions")
+    #: Nullable so a question outlives the blueprint row it came from — an
+    #: instructor re-planning the paper should not silently delete questions
+    #: they have already approved.
+    blueprint_row = models.ForeignKey(
+        BlueprintRow, on_delete=models.SET_NULL, null=True, blank=True, related_name="questions"
+    )
+    stem = models.TextField()
+    question_type = models.CharField(max_length=16, choices=BlueprintRow.QuestionType.choices)
+    #: Empty for short answer and numeric; ["True", "False"] for true/false.
+    options = models.JSONField(default=list, blank=True)
+    correct = models.TextField()
+    explanation = models.TextField(blank=True)
+    source_ref = models.CharField(max_length=300, help_text="The passage this question cites.")
+    source_chunk = models.ForeignKey(
+        "courses.Chunk",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="questions",
+    )
+    #: True when the cited passage is an OCR transcription rather than a text
+    #: layer. The question is then quoting a model's reading of a picture, and
+    #: review is entitled to know that before approving the wording.
+    from_ocr = models.BooleanField(default=False)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.CANDIDATE)
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "pk"]
+
+    def __str__(self) -> str:
+        return self.stem[:80]
+
+    @property
+    def is_candidate(self) -> bool:
+        return self.status == self.Status.CANDIDATE

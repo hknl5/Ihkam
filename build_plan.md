@@ -263,6 +263,16 @@ Build:
 **Manual test:** run generation for one blueprint row, read the candidates, check each cites a real passage/page.
 **Success check:** ≥ target share of candidates are on-topic and derived from the uploaded material (not general knowledge). Any question citing content outside the passages is a failure — track the rate.
 
+> **M5 technical decisions:**
+> - **Over-generation is `ceil(N × 1.5)`**, behind the named `over_generated_count()` helper so M7 can tune it once the review loop shows how many candidates survive. A row of 1 yields 2 — there is always an alternative to reject the first in favour of.
+> - **Passages are labelled `P1…Pn` in the prompt** and every candidate must return one as `source_ref`. The label is resolved back to the supplied `Passage` object; a citation that resolves to nothing is **dropped and counted**, never stored. That count is the M5 success metric.
+> - **The grounding instruction is one named constant** (`GROUNDING_RULE`), stated in both halves of the call and asserted by a test — if it ever stops reaching the model, generation silently becomes general knowledge with citations attached.
+> - **Per-type validation lives in the Pydantic model**: an MCQ whose `correct` is not one of its options is not a flawed candidate but an unusable one, so it is a validation failure that gets the single retry. Retry once for a malformed answer; a call that never reached the model is reported as itself (the M2 rule).
+> - **A candidate of the wrong type is dropped**, not kept — the blueprint decided the type, and a short answer in an MCQ row spends marks the plan did not allocate.
+> - **`from_ocr` propagates from the cited passage** onto the `Question`, so M6 and review know the question is quoting a transcription of a picture.
+> - **Deferred types are refused by name before any call** (`UnsupportedQuestionType`), never silently downgraded to MCQ.
+> - **`Question` lives in `exams/`, not `agents/`** — it is exam content, not agent machinery — and its `blueprint_row` link is `SET_NULL` so re-planning a paper does not delete questions already approved.
+
 ---
 
 #### M6 · Answer key generated *with* the question
