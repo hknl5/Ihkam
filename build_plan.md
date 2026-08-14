@@ -319,6 +319,14 @@ Build:
 **Manual test:** hand-craft or generate a too-easy question, run review, confirm rejection + reason.
 **Success check:** the level-mismatch example and an out-of-scope example are both caught with correct reasons.
 
+> **M7 technical decisions:**
+> - **The split is by what can be computed, not by what is convenient.** Python decides: exactly one correct option, no repeated option, the correct option is not conspicuously the longest, the answer key is present and usable for its type, and (via M6) the mark split adds up. The model decides only what needs language understanding: content link, clarity, answer consistency, level match, distractor plausibility. Sending a countable thing to a model would make a fixed answer probabilistic.
+> - **Every rejection carries a `requirement`, not just a `reason`.** "Bad question" is not something a generator can act on. When the model fails a check without saying what to do, a per-check default instruction is filled in (`DEFAULT_REQUIREMENTS`) so M8 always has something to hand back.
+> - **All checks run, even after the first failure.** One review, one complete set of notes, one regeneration — otherwise 2A fixes the level, regenerates, and only then discovers the scope problem.
+> - **The maths hook is `MATH_CHECKERS`.** M6's `mark_sum_ok` is surfaced here as its first member, never recomputed, so one place in the system decides whether a mark split adds up. A later symbolic evaluator registers into the same list without touching `review_question`.
+> - **Option normalisation strips edge punctuation only.** Stripping punctuation everywhere collapsed `(x y)′` and `x + y` into the same string and reported two different Boolean expressions as one option repeated — caught on the real discrete maths course. Interior symbols are content, not presentation.
+> - **Nothing is stored and nothing is rewritten.** `ReviewOut` has no field a corrected question could arrive in, and review writes no rows; M8 decides what to do with a verdict.
+
 ---
 
 #### M8 · Closed correction loop (orchestrator)
