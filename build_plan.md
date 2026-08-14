@@ -289,6 +289,13 @@ Build:
 **Manual test:** generate a numeric question, confirm it comes back with steps and a mark split already attached.
 **Success check:** 100% of generated candidates arrive with a type-appropriate answer key; none require a second call to produce the key.
 
+> **M6 technical decisions:**
+> - **The key is validated in the same object as the stem** (`CandidateOut.answer_key` → `agents/answer_key.py`). A short answer with no required elements, or a numeric with no steps, fails validation and is re-asked by the existing single retry — never stored keyless for someone to complete later.
+> - **Objective keys are formalised, not demanded.** `correct` and the options already are the key, so an `ObjectiveKey` is built from them when the model does not repeat itself. The open types must supply theirs.
+> - **The model splits the marks; Python only adds them up.** `check_mark_sum` compares the per-step marks with the question's marks in `Decimal`, and on a mismatch **flags** (`mark_sum_ok=False` plus a note) rather than rescaling — the first hook toward M7's deterministic maths checker. A flagged candidate is kept and reported, not dropped: the stem is not the arithmetic's fault.
+> - **Stored as JSON plus one queryable column.** `Question.answer_key` holds the typed key (marks as strings, so half marks survive the round trip); `Question.mark_sum_ok` is a nullable boolean so review can *query* for the questions whose marks do not add up, and "not checked" stays distinct from "checked and wrong".
+> - **The essay key format exists before essay questions do.** `EssayKey` (rubric criteria + weights) validates and round-trips now; `MVP_TYPES` still excludes essay, so none is generated.
+
 > ✅ **End of Stage 2: Agent 2A is complete and independently testable.** Feed it a blueprint item, get grounded questions + answer keys back.
 
 ---

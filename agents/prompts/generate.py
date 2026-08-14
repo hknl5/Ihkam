@@ -16,7 +16,7 @@ candidate has to name the passage it came from.
 
 from __future__ import annotations
 
-VERSION = "generate/v1"
+VERSION = "generate/v2"  # M6: the answer key comes back with the question
 
 #: Stated in both halves of the call, and asserted by the test suite. If this
 #: sentence ever stops reaching the model, generation silently becomes general
@@ -27,6 +27,42 @@ GROUNDING_RULE = (
     "those passages. Do not use anything you know about the subject that is not "
     "in them."
 )
+
+#: Stated with the type rules and asserted by the suite. The key is not a
+#: separate deliverable the model may skip when it is running out of room: it is
+#: part of the question, and M6 exists because a key produced by a later call is
+#: a key for a question the model has to re-read rather than one it wrote.
+ANSWER_KEY_RULE = (
+    "Every question carries its own `answer_key` in the same reply. Never leave "
+    "it out and never leave it to be filled in later — a question without its "
+    "key is not finished."
+)
+
+#: What `answer_key` must contain, per type. Objective questions repeat the
+#: answer they already gave; the open types carry what a marker actually needs.
+KEY_RULES = {
+    "mcq": (
+        "`answer_key`: {\"answer\": the correct option text, exactly as it "
+        "appears in `options`}."
+    ),
+    "true_false": '`answer_key`: {"answer": "True" or "False"}.',
+    "short_answer": (
+        "`answer_key`: {\"model_answer\": the answer you would accept in full, "
+        "\"required_elements\": a list of 2–4 short phrases naming the ideas a "
+        "student's answer must contain to earn the marks}. The elements are "
+        "ideas, not wording — a marker uses them on an answer phrased "
+        "differently from yours. Every element must come from the passage."
+    ),
+    "numeric": (
+        "`answer_key`: {\"steps\": a list of {\"text\": what is done in this "
+        "step, with the arithmetic, \"marks\": what this step is worth}, "
+        "\"final_answer\": the answer with its unit}. Split the question's "
+        "marks across the steps however the work deserves — the marks are a "
+        "guide for a human marker, not an answer to match — but **the step "
+        "marks must add up to exactly the marks the question is worth**. Use "
+        "only quantities, formulas and methods the passage gives."
+    ),
+}
 
 TYPE_RULES = {
     "mcq": (
@@ -95,8 +131,10 @@ slip, and prefer a text-layer passage when both say the same thing.
 passages are in.
 - `explanation` says why the answer is right, in one or two sentences, pointing \
 at what the passage states.
+- {ANSWER_KEY_RULE}
 
-Answer with JSON only, in exactly this shape:
+Answer with JSON only, in exactly this shape. `answer_key` holds the fields \
+listed for the type you are asked for, and nothing else:
 
 {{
   "questions": [
@@ -106,7 +144,8 @@ Answer with JSON only, in exactly this shape:
       "options": ["string"],
       "correct": "string",
       "explanation": "string",
-      "source_ref": "P1"
+      "source_ref": "P1",
+      "answer_key": {{}}
     }}
   ]
 }}
@@ -165,6 +204,8 @@ def build_user_prompt(
         f"{_LANGUAGES.get(language, '')}\n\n"
         f"{TYPE_RULES.get(question_type, '')}\n"
         f"{LEVEL_RULES.get(level, '')}\n\n"
+        f"{ANSWER_KEY_RULE}\n"
+        f"{KEY_RULES.get(question_type, '')}\n\n"
         f"Write exactly {count} question(s), all of this type and level, each "
         "about a different thing the passages say.\n\n"
         f"{GROUNDING_RULE}\n\n"

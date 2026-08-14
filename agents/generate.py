@@ -16,11 +16,13 @@ Four decisions shape it:
 * **Over-generation, not exactness.** A row asking for N questions is generated
   as `ceil(N * 1.5)` candidates, so the instructor always has an alternative to
   the one they reject and M7's review loop has somewhere to go. Even N=1 gets 2.
-* **The answer comes back with the question.** `correct` and `explanation` are
-  part of the same validated object as the stem. M6 extends their shape by
-  type; it must never be a second call, because an answer key produced by a
+* **The answer comes back with the question.** `correct`, `explanation` and (M6)
+  the typed `answer_key` are part of the same validated object as the stem, from
+  the same single call — never a second one, because an answer key produced by a
   later call is a key for a question the model has to re-read rather than one it
-  wrote.
+  wrote. The key's shape by type lives in `agents/answer_key.py`; the only thing
+  decided here is the arithmetic check that a numeric key's per-step marks total
+  the question's marks, which flags rather than corrects.
 * **Retry once, and only for a malformed answer.** A call that never reached the
   model — no key, no credit, rate limit — is reported as itself. The M2 rule.
 
@@ -37,8 +39,18 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.db import transaction
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
 
+from agents.answer_key import (
+    KEY_CLASSES,
+    NUMERIC,
+    OBJECTIVE,
+    SHORT_ANSWER,
+    AnswerKey,
+    NumericKey,
+    check_mark_sum,
+    kind_for_type,
+)
 from courses.services.retrieval import Passage
 from exams.models import BlueprintRow, Question
 
@@ -96,6 +108,12 @@ class CandidateOut(BaseModel):
     what makes the JSON a *question*: an MCQ whose `correct` is not one of its
     options is not a slightly flawed candidate, it is unusable, and a retry
     usually fixes it.
+
+    `answer_key` is checked in the same pass, for the same reason (M6). A short
+    answer that came back without its required elements, or a numeric problem
+    without its steps, is a question whose key someone would have to write
+    later — which is exactly what this milestone forbids. It fails validation
+    here and the one retry asks for it again, rather than being stored keyless.
     """
 
     stem: str
@@ -104,6 +122,14 @@ class CandidateOut(BaseModel):
     correct: str
     explanation: str = ""
     source_ref: str
+    #: The typed key, as the model wrote it. Shape-checked into an `AnswerKey`
+    #: by `answer_key()` below; the mark arithmetic is checked separately, in
+    #: `_collect`, because only the item knows what the question is worth.
+    answer_key: dict = Field(default_factory=dict)
+
+    #: The parsed key, built during validation so a candidate cannot exist
+    #: without one. Read through `key`.
+    _key: AnswerKey | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check_shape(self):
@@ -140,7 +166,41 @@ class CandidateOut(BaseModel):
             # Short answer and numeric are open questions; options would only be
             # a multiple choice wearing the wrong label.
             self.options = []
+
+        self._key = self._build_key()
         return self
+
+    def _build_key(self) -> AnswerKey:
+        """The typed answer key this candidate arrived with (M6).
+
+        Objective keys are *formalised* rather than demanded: `correct` and the
+        options already are the key, so one is built from them if the model did
+        not repeat itself. The open types are demanded, because there the key is
+        information the stem does not contain — and an empty one would mean the
+        marking scheme has to be written by hand after generation.
+        """
+        raw = dict(self.answer_key or {})
+        raw.pop("kind", None)
+        raw.setdefault("explanation", self.explanation)
+        kind = kind_for_type(self.type)
+
+        if kind == OBJECTIVE:
+            raw.setdefault("answer", self.correct)
+            raw["answer"] = self.correct  # the validated stem's answer wins
+            raw["options"] = list(self.options)
+        elif kind == SHORT_ANSWER:
+            raw.setdefault("model_answer", self.correct)
+        elif kind == NUMERIC:
+            raw.setdefault("final_answer", self.correct)
+
+        try:
+            return KEY_CLASSES[kind].model_validate(raw)
+        except ValidationError as exc:
+            raise ValueError(f"the {kind} answer key is unusable: {exc}") from exc
+
+    @property
+    def key(self) -> AnswerKey:
+        return self._key
 
 
 class GenerationOut(BaseModel):
@@ -236,6 +296,28 @@ class Candidate:
     #: The supplied passage this candidate cited, resolved — not the model's
     #: string. A candidate only exists if this resolved.
     passage: Passage
+    #: The typed key (M6), produced by the same call that produced the stem.
+    #: Never None: a candidate without a key does not become a candidate.
+    answer_key: AnswerKey | None = None
+
+    @property
+    def key_kind(self) -> str:
+        return self.answer_key.kind if self.answer_key else ""
+
+    @property
+    def mark_sum_ok(self) -> bool | None:
+        """Did the numeric key's steps total the question's marks?
+
+        `None` for every other type — there is no mark split to add up, and
+        storing `True` there would claim a check that never ran.
+        """
+        key = self.answer_key
+        return key.mark_sum_ok if isinstance(key, NumericKey) else None
+
+    @property
+    def mark_sum_note(self) -> str:
+        key = self.answer_key
+        return key.mark_sum_note if isinstance(key, NumericKey) else ""
 
     @property
     def source_ref(self) -> str:
@@ -263,6 +345,17 @@ class GenerationRun:
     #: the M5 failure the success check counts: a question written from outside
     #: the material. Dropped, never stored, always reported.
     ungrounded: list[str] = field(default_factory=list)
+    #: Numeric candidates whose per-step marks do not total the question's marks
+    #: (M6). Kept, not dropped, and reported so review and the instructor see
+    #: which mark schemes need an eye.
+    mark_sum_flagged: list[str] = field(default_factory=list)
+
+    @property
+    def keyed_rate(self) -> float:
+        """Share of kept candidates that carry a typed key. The M6 success check."""
+        if not self.candidates:
+            return 0.0
+        return sum(1 for c in self.candidates if c.answer_key) / len(self.candidates)
 
     @property
     def wanted(self) -> int:
@@ -424,6 +517,22 @@ def _collect(item: GenerationItem, result: GenerationOut) -> GenerationRun:
                 candidate.type,
             )
             continue
+        key = candidate.key
+        if isinstance(key, NumericKey):
+            # Deterministic, in Python, on every numeric key: the model chose the
+            # split, this only adds it up. A mismatch is flagged on the candidate
+            # and reported — the run still returns it, because a question with a
+            # questionable mark split is a question an instructor can fix, and
+            # dropping it would throw away the stem to punish the arithmetic.
+            check_mark_sum(key, item.marks)
+            if not key.mark_sum_ok:
+                run.mark_sum_flagged.append(candidate.stem)
+                logger.warning(
+                    "Mark split for a candidate on '%s' does not total the "
+                    "question's marks: %s",
+                    item.topic_name,
+                    key.mark_sum_note,
+                )
         run.candidates.append(
             Candidate(
                 stem=candidate.stem,
@@ -432,6 +541,7 @@ def _collect(item: GenerationItem, result: GenerationOut) -> GenerationRun:
                 correct=candidate.correct,
                 explanation=candidate.explanation,
                 passage=passage,
+                answer_key=key,
             )
         )
     return run
@@ -474,6 +584,8 @@ def save_candidates(run: GenerationRun, *, exam=None, row=None) -> list[Question
                     ],
                     source_chunk_id=candidate.passage.chunk_id,
                     from_ocr=candidate.from_ocr,
+                    answer_key=candidate.answer_key.as_dict() if candidate.answer_key else {},
+                    mark_sum_ok=candidate.mark_sum_ok,
                     position=position + offset,
                 )
             )
@@ -482,6 +594,7 @@ def save_candidates(run: GenerationRun, *, exam=None, row=None) -> list[Question
 
 __all__ = [
     "MVP_TYPES",
+    "AnswerKey",
     "OVER_GENERATION_MULTIPLIER",
     "Candidate",
     "CandidateOut",

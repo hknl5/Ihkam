@@ -201,6 +201,19 @@ class Question(models.Model):
     #: layer. The question is then quoting a model's reading of a picture, and
     #: review is entitled to know that before approving the wording.
     from_ocr = models.BooleanField(default=False)
+    #: The typed answer key (M6), written by the same call that wrote the stem:
+    #: a direct key for MCQ and true/false, a model answer plus required
+    #: elements for short answer, worked steps with per-step marks plus the final
+    #: answer for numeric. JSON rather than columns because the four shapes have
+    #: almost nothing in common, and review reads a key whole rather than
+    #: querying inside it — see `agents.answer_key.answer_key_from_dict`, which
+    #: is how it is read back.
+    answer_key = models.JSONField(default=dict, blank=True)
+    #: The one thing review *does* query: did a numeric key's per-step marks
+    #: total the question's marks? `None` when there was no mark split to add up
+    #: (every other type), so "not checked" and "checked and wrong" stay
+    #: distinguishable. Set by Python, never by a model, and never auto-fixed.
+    mark_sum_ok = models.BooleanField(null=True, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.CANDIDATE)
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -215,3 +228,19 @@ class Question(models.Model):
     @property
     def is_candidate(self) -> bool:
         return self.status == self.Status.CANDIDATE
+
+    @property
+    def key(self):
+        """The stored answer key, parsed back into its typed form (M6).
+
+        Stage-3 review reads the stem and this together, in one pass, with no
+        model call: the key was written by the same call that wrote the stem.
+        """
+        from agents.answer_key import answer_key_from_dict  # local: agents imports this module
+
+        return answer_key_from_dict(self.answer_key)
+
+    @property
+    def needs_mark_review(self) -> bool:
+        """A numeric key whose steps do not total the question's marks."""
+        return self.mark_sum_ok is False

@@ -228,6 +228,11 @@ class ValidationTests(SimpleTestCase):
             "correct": "It halves the interval.",
             "explanation": "The passage states it.",
             "source_ref": "P1",
+            # M6: a short answer without its key no longer validates.
+            "answer_key": {
+                "model_answer": "It halves the interval.",
+                "required_elements": ["halves the interval"],
+            },
         }
         provider = ScriptedProvider(payload(candidate))
         run = generate_candidates(an_item(question_type="short_answer"), provider=provider)
