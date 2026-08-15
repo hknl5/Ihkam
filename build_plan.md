@@ -408,6 +408,17 @@ Build:
 **Manual test:** edit a question, approve the set, export both PDFs, reopen — confirm your edit survived.
 **Success check:** exported PDFs are correct and complete; instructor edits persist across regeneration cycles.
 
+> **M11 technical decisions:**
+> - **The lock is a flag, not an inference.** `Question.instructor_edited` is set at the one moment a human presses Save, and by nothing else — approving is a decision, not a rewrite, and does not set it. Inferring the lock from `updated_at` would have made every status change look like an edit.
+> - **The automatic loop carries locked questions; it does not skip them.** The loop never rewrote a stored question, but it *replaces an item's attempt log* on every pass, and M9 reads the pool through that log — so an edited question whose stem no longer matched anything the model wrote would have silently dropped out of the pool. `locked_questions` are re-attached to the new log as round-0 attempts. An edit lost to bookkeeping is an edit lost.
+> - **Manual request warns then obeys; the automatic cycle is silent.** `revise()` raises `RevisionNeedsConfirmation` *before* generating anything, so asking costs nothing. The loop says nothing at all, because the instructor did not ask for that run.
+> - **Revisions travel M8's existing channel.** "Make easier" is a note handed to Agent 2A exactly the way Agent 3A's rejection notes are, and the replacement is reviewed by 3A before it is stored — a question an instructor asked for ends up on the same paper, so it meets the same bar. A rejected replacement leaves the original untouched. There is no second generation prompt.
+> - **A replacement lands in the same `Question` row**, so the form placement, position and marks survive: Form A's question 7 stays Form A's question 7. It goes back to `candidate` and the lock comes off — approval was given to a different question.
+> - **The exam document has nowhere to put an answer.** `build_exam_document` never reads `correct` or `answer_key`, so no exporter can leak one. Two files, always — one file with a section at the back is one careless print away from a lost exam.
+> - **Export is a document model plus a renderer.** `export.py` decides what a paper *is*; `export_pdf.py` turns that into bytes. Word / Moodle XML / QTI / Canvas implement two methods and re-derive nothing.
+> - **Arabic: wrap first, then shape, then reorder.** The bidi algorithm returns *visual* order, and visual-order text cannot be line-wrapped — so paragraphs are measured and broken while still logical, and each line is reshaped and reordered on its own. RTL papers also mirror their table columns and take their chrome vocabulary from the paper's language; per-question marks follow the *stem's* script, so an English question on an Arabic paper does not become one bidi-mixed line with back-to-front brackets.
+> - **PDF via ReportLab + IBM Plex Sans Arabic (OFL, vendored).** Pure Python, no browser or system libraries, identical output on every machine that runs the suite; the font is vendored so an export works offline and on a machine with no Arabic system font. *(The plan's instruction was to follow `/mnt/skills/public/pdf/SKILL.md`; that skill is not present in this environment, so the stack was chosen deliberately and the seam above keeps swapping the renderer cheap.)*
+
 ---
 
 #### M12 · Question bank

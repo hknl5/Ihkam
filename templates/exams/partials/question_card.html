@@ -1,0 +1,132 @@
+{# §5's signature element: the Decision Rail. The strip on the card's leading
+   edge carries the question's state in one glance — grey candidate, teal
+   approved, amber needs attention, red rejected — and is *always* paired with
+   the label beside it, because colour is never the only signal. #}
+{% with question=card.question %}
+<article class="card card--rail question-card is-{{ question.rail_state }}"
+         id="q{{ question.pk }}"
+         aria-labelledby="q{{ question.pk }}-stem">
+
+  <header class="question-card__head">
+    <p class="status {% if question.rail_state == 'approved' %}status--ok{% elif question.rail_state == 'rejected' %}status--danger{% elif question.rail_state == 'attention' %}status--warn{% else %}status--candidate{% endif %}">
+      {% if question.rail_state == 'approved' %}Approved
+      {% elif question.rail_state == 'rejected' %}Rejected
+      {% elif question.rail_state == 'attention' %}Needs attention
+      {% else %}Candidate{% endif %}
+    </p>
+    {% if question.instructor_edited %}
+      <span class="lock" title="Edited by you — no generation cycle will overwrite it">
+        Your edit · locked
+      </span>
+    {% endif %}
+  </header>
+
+  <p class="lead" id="q{{ question.pk }}-stem" dir="auto">{{ question.stem }}</p>
+
+  {% if question.options %}
+    <ol class="options">
+      {% for option in question.options %}
+        <li dir="auto" {% if option == question.correct %}class="is-correct"{% endif %}>
+          {{ option }}
+          {% if option == question.correct %}<span class="status status--ok">answer</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p class="caption" dir="auto"><strong>Answer:</strong> {{ question.correct }}</p>
+  {% endif %}
+
+  <p class="meta-row">
+    <span dir="auto">{{ question.blueprint_row.topic.name|default:"—" }}</span> ·
+    <span>{{ question.get_question_type_display }}</span> ·
+    <span>{{ question.blueprint_row.get_level_display|default:"—" }}</span> ·
+    <span class="num">{{ question.blueprint_row.marks_per_question|default:"0" }}</span> marks
+    {% for entry in question.form_entries.all %}
+      · <span class="status status--info">Form {{ entry.form.label }}</span>
+    {% endfor %}
+  </p>
+
+  {% if card.notes %}
+    <details class="topic-detail system-notes">
+      <summary>System notes ({{ card.notes|length }})</summary>
+      <ul class="topic-detail__list">
+        {% for note in card.notes %}<li dir="auto">{{ note }}</li>{% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+
+  <p class="caption source-ref" dir="auto">Source: {{ question.source_ref }}</p>
+
+  {# --- The confirmation the hard rule requires ------------------------------
+     Shown only after a revision was asked for on a question the instructor
+     edited. Manual request warns, then obeys. #}
+  {% if card.confirm %}
+    <div class="banner banner--warn confirm" role="alert">
+      <span class="banner__label">This question was edited manually.</span>
+      <span>
+        Regenerating will discard your edit and replace it with a freshly written
+        question, reviewed again from scratch.
+      </span>
+      <form method="post" action="{% url 'exams:question_action' course.pk exam.pk question.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="{{ card.confirm_mode }}">
+        <input type="hidden" name="confirmed" value="1">
+        <div class="action-bar">
+          <button type="submit" class="btn btn--danger">
+            Discard my edit and {{ card.confirm_label }}
+          </button>
+          <a class="btn btn--ghost" href="{% url 'exams:review' course.pk exam.pk %}">Keep my edit</a>
+        </div>
+      </form>
+    </div>
+  {% endif %}
+
+  {# --- Edit ---------------------------------------------------------------- #}
+  <details class="topic-detail edit-panel" {% if card.form.errors %}open{% endif %}>
+    <summary>Edit this question</summary>
+    <form method="post" action="{% url 'exams:question_action' course.pk exam.pk question.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="edit">
+      {% for field in card.form %}
+        {% include "partials/field.html" with field=field %}
+      {% endfor %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--secondary">Save edit</button>
+        <span class="caption">
+          Saving locks this question: the automatic loop will leave it alone.
+        </span>
+      </div>
+    </form>
+  </details>
+
+  {# --- The decision, and the ways to ask for a different question ---------- #}
+  <div class="action-bar question-actions">
+    <form method="post" action="{% url 'exams:question_action' course.pk exam.pk question.pk %}">
+      {% csrf_token %}
+      {# One primary only: the decision this screen exists for. #}
+      <button type="submit" name="action" value="approve" class="btn btn--primary"
+              {% if question.is_approved %}disabled{% endif %}>Approve</button>
+      <button type="submit" name="action" value="reject" class="btn btn--secondary"
+              {% if question.is_rejected %}disabled{% endif %}>Reject</button>
+      <button type="submit" name="action" value="regenerate" class="btn btn--ghost">Regenerate</button>
+      <button type="submit" name="action" value="easier" class="btn btn--ghost">Make easier</button>
+      <button type="submit" name="action" value="harder" class="btn btn--ghost">Make harder</button>
+      <button type="submit" name="action" value="clarify" class="btn btn--ghost">Clarify wording</button>
+      <button type="submit" name="action" value="delete" class="btn btn--danger">Delete</button>
+    </form>
+
+    {% if forms_saved|length > 1 and question.form_entries.exists %}
+      <form method="post" action="{% url 'exams:question_action' course.pk exam.pk question.pk %}"
+            class="move-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="move">
+        <label class="visually-hidden" for="move-{{ question.pk }}">Move to form</label>
+        <select name="form_id" id="move-{{ question.pk }}">
+          {% for form in forms_saved %}<option value="{{ form.pk }}">Form {{ form.label }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn--ghost">Move to form</button>
+      </form>
+    {% endif %}
+  </div>
+</article>
+{% endwith %}

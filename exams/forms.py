@@ -3,8 +3,9 @@ from decimal import Decimal, InvalidOperation
 from django import forms
 from django.forms import modelformset_factory
 
-from .models import Blueprint, BlueprintRow, Exam
+from .models import Blueprint, BlueprintRow, Exam, Question
 from .services.blueprint import RowSpec, eligible_topics
+from .services.export import ORDER_LABELS, ExportOptions
 from .services.forms import MAX_FORMS
 
 
@@ -241,3 +242,136 @@ def specs_from_post(post, *, course):
             )
         )
     return specs, unreadable
+
+
+# --- M11: the decision surface and the deliverable ---------------------------
+
+
+class QuestionEditForm(forms.ModelForm):
+    """The instructor editing a question by hand.
+
+    Saving this sets the lock (`Question.mark_edited`) — the view does it rather
+    than the form, so that the one place a lock is set is the one place a human
+    pressed Save.
+
+    `options` is edited as one option per line. A JSON textarea would be honest
+    about the storage and useless to the person using it, and every stored shape
+    here is a flat list of strings.
+    """
+
+    options_text = forms.CharField(
+        label="Options",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 4, "dir": "auto"}),
+        help_text="One option per line. Leave empty for short-answer and numeric questions.",
+    )
+
+    class Meta:
+        model = Question
+        fields = ("stem", "correct", "explanation")
+        labels = {
+            "stem": "Question",
+            "correct": "Correct answer",
+            "explanation": "Explanation",
+        }
+        widgets = {
+            "stem": forms.Textarea(attrs={"rows": 4, "dir": "auto"}),
+            "correct": forms.TextInput(attrs={"dir": "auto"}),
+            "explanation": forms.Textarea(attrs={"rows": 2, "dir": "auto"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["options_text"].initial = "\n".join(
+                str(option) for option in (self.instance.options or [])
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        options = [
+            line.strip()
+            for line in (cleaned.get("options_text") or "").splitlines()
+            if line.strip()
+        ]
+        correct = (cleaned.get("correct") or "").strip()
+        # The one rule worth enforcing here: a multiple-choice question whose
+        # correct answer is not one of its options cannot be marked. Everything
+        # else about a question is the instructor's judgement, and this screen
+        # does not second-guess it.
+        if options and correct and correct not in options:
+            self.add_error(
+                "correct",
+                "The correct answer has to be one of the options, word for word.",
+            )
+        cleaned["options"] = options
+        return cleaned
+
+    def save(self, commit=True):
+        question = super().save(commit=False)
+        question.options = self.cleaned_data.get("options", [])
+        # A hand-edited key is out of scope for M11's card, but an edited stem
+        # must not leave a stale objective key behind it pointing at an answer
+        # that is no longer offered.
+        key = question.answer_key if isinstance(question.answer_key, dict) else {}
+        if key.get("kind") == "objective" and question.correct:
+            key = {**key, "answer": question.correct, "options": question.options}
+            question.answer_key = key
+        if commit:
+            question.save()
+        return question
+
+
+class ExportOptionsForm(forms.Form):
+    """What goes on the paper. Every field is a choice the instructor makes."""
+
+    form_id = forms.ChoiceField(label="Form", choices=())
+    question_order = forms.ChoiceField(
+        label="Question order",
+        choices=(),
+        initial=ExportOptions.Order.ASSEMBLED,
+        widget=forms.RadioSelect,
+    )
+    institution = forms.CharField(
+        label="Institution",
+        required=False,
+        widget=forms.TextInput(attrs={"placeholder": "King Saud University", "dir": "auto"}),
+    )
+    logo = forms.ImageField(label="Institution logo", required=False)
+    instructions = forms.CharField(
+        label="Instructions to students",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3, "dir": "auto"}),
+    )
+    show_course_data = forms.BooleanField(label="Course code and name", required=False, initial=True)
+    show_duration = forms.BooleanField(label="Duration", required=False, initial=True)
+    show_score_distribution = forms.BooleanField(
+        label="Score distribution table", required=False, initial=True
+    )
+    show_marks_per_question = forms.BooleanField(
+        label="Marks beside each question", required=False, initial=True
+    )
+    show_form_label = forms.BooleanField(label="Form letter", required=False, initial=True)
+
+    def __init__(self, *args, forms_available=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["form_id"].choices = [
+            (form.pk, f"Form {form.label} — {form.question_count} questions")
+            for form in forms_available
+        ]
+        self.fields["question_order"].choices = list(ORDER_LABELS.items())
+
+    def options(self, *, logo_path: str = "") -> ExportOptions:
+        """The cleaned input as the frozen options object the exporters take."""
+        data = self.cleaned_data
+        return ExportOptions(
+            show_form_label=data.get("show_form_label", True),
+            question_order=data.get("question_order") or ExportOptions.Order.ASSEMBLED,
+            institution=(data.get("institution") or "").strip(),
+            logo_path=logo_path,
+            show_course_data=data.get("show_course_data", True),
+            show_duration=data.get("show_duration", True),
+            show_score_distribution=data.get("show_score_distribution", True),
+            instructions=(data.get("instructions") or "").strip(),
+            show_marks_per_question=data.get("show_marks_per_question", True),
+        )

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Export — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+{# Two files, always. The exam paper carries no answers at all — not a section
+   at the back, not an appendix — because one careless print of a single file is
+   the whole exam gone. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:review' course.pk exam.pk %}">Review</a>
+  <span aria-hidden="true">/</span>
+  <span>Export</span>
+</nav>
+
+<div class="page-head">
+  <h1>Export</h1>
+  <p>
+    The exam paper and the answer key are two separate files. Set what goes on
+    them, then download each one.
+  </p>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="card">
+  {% csrf_token %}
+
+  {% for field in form %}
+    {% include "partials/field.html" with field=field %}
+  {% endfor %}
+
+  <div class="action-bar">
+    <button type="submit" name="download" value="exam" class="btn btn--primary">
+      Download the exam
+    </button>
+    <button type="submit" name="download" value="key" class="btn btn--secondary">
+      Download the answer key
+    </button>
+  </div>
+  <p class="caption">
+    The exam PDF contains the questions and, for multiple choice, the options —
+    and nothing else. The answer key is a separate file, marked as such on every
+    page.
+  </p>
+</form>
+{% endblock %}

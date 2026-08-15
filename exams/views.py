@@ -16,8 +16,18 @@ from django.views.decorators.http import require_POST
 
 from courses.models import Course
 
-from .forms import ExamForm, _wants_multiple_forms, row_formset, specs_from_post
-from .models import Blueprint, Exam
+from agents.prompts.revision import LABELS as REVISION_LABELS
+from agents.prompts.revision import MODES as REVISION_MODES
+
+from .forms import (
+    ExamForm,
+    ExportOptionsForm,
+    QuestionEditForm,
+    _wants_multiple_forms,
+    row_formset,
+    specs_from_post,
+)
+from .models import Blueprint, Exam, Question
 from .services.blueprint import Issue, auto_build, eligible_topics, validate, validate_blueprint
 from .services.convergence import report_for_exam
 from .services.forms import FormAssemblyError, assemble_forms, save_assembly
@@ -336,4 +346,289 @@ def exam_compare(request, pk, exam_pk):
             "forms": forms,
             "semantic_ran": bool(report and report.semantic_ran),
         },
+    )
+
+
+# --- M11: the decision surface ------------------------------------------------
+
+
+def _question_notes(question) -> list[str]:
+    """The system notes panel: what إحكام recorded about this question.
+
+    Read back from what is already stored — the review findings M7 wrote, M6's
+    mark-sum flag, and the OCR provenance — rather than recomputed. A review
+    screen that re-ran the checks would show the instructor a different verdict
+    from the one the loop acted on.
+    """
+    notes: list[str] = []
+    if question.needs_mark_review:
+        notes.append(
+            "The steps in this question's answer key do not add up to the marks it "
+            "carries. Nothing was auto-corrected — the split is yours to fix."
+        )
+    if question.from_ocr:
+        notes.append(
+            "The passage this question cites is an OCR transcription of a scanned "
+            "page, so the wording is worth checking against the original."
+        )
+    for attempt in question.attempts.order_by("-pk")[:3]:
+        for note in attempt.notes or []:
+            if note not in notes:
+                notes.append(note)
+    return notes
+
+
+@login_required
+def question_review(request, pk, exam_pk):
+    """The review screen: every question of this exam, as a decision.
+
+    The screen the whole pipeline has been feeding. Nothing here calls a model
+    on load — the notes are read back from what was recorded, so opening the
+    screen costs nothing and shows exactly what the loop decided.
+    """
+    exam = _own_exam(request, pk, exam_pk)
+    questions = list(
+        exam.questions.select_related("blueprint_row", "blueprint_row__topic")
+        .prefetch_related("attempts", "form_entries__form")
+        .order_by("position", "pk")
+    )
+
+    status = request.GET.get("status") or ""
+    if status in dict(Question.Status.choices):
+        questions = [question for question in questions if question.status == status]
+
+    confirm_pk = _int_or_none(request.GET.get("confirm"))
+    confirm_mode = request.GET.get("mode") or ""
+
+    cards = [
+        {
+            "question": question,
+            "form": QuestionEditForm(instance=question, prefix=f"q{question.pk}"),
+            "notes": _question_notes(question),
+            "placements": [entry.form for entry in question.form_entries.all()],
+            "confirm": question.pk == confirm_pk and confirm_mode in REVISION_MODES,
+            "confirm_mode": confirm_mode if question.pk == confirm_pk else "",
+            # The button's own words, resolved here: a template filter that
+            # looked this up would be a filter written to avoid a dictionary.
+            "confirm_label": REVISION_LABELS.get(confirm_mode, ("", ""))[0].lower(),
+        }
+        for question in questions
+    ]
+
+    return render(
+        request,
+        "exams/review.html",
+        {
+            "course": exam.course,
+            "exam": exam,
+            "cards": cards,
+            "status": status,
+            "statuses": Question.Status.choices,
+            "counts": {
+                value: exam.questions.filter(status=value).count()
+                for value, _label in Question.Status.choices
+            },
+            "revision_labels": REVISION_LABELS,
+            "forms_saved": list(exam.forms.all()),
+        },
+    )
+
+
+def _int_or_none(raw):
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _review_url(exam, **params) -> str:
+    url = reverse("exams:review", args=[exam.course_id, exam.pk])
+    if params:
+        from urllib.parse import urlencode
+
+        url = f"{url}?{urlencode(params)}"
+    return url
+
+
+@login_required
+@require_POST
+def question_action(request, pk, exam_pk, question_pk):
+    """One decision about one question. Every card action posts here.
+
+    Dispatching in one view rather than eight keeps the permission check, the
+    ownership check and the redirect in one place; what each action *does* lives
+    in the model or the service it belongs to.
+    """
+    exam = _own_exam(request, pk, exam_pk)
+    question = get_object_or_404(Question, pk=question_pk, exam=exam)
+    action = request.POST.get("action") or ""
+
+    if action == "approve":
+        question.status = Question.Status.APPROVED
+        question.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"Approved. {question.stem[:60]}")
+
+    elif action == "reject":
+        question.status = Question.Status.REJECTED
+        question.save(update_fields=["status", "updated_at"])
+        messages.warning(
+            request,
+            "Rejected. It stays in the log and is out of every form and every pool.",
+        )
+
+    elif action == "delete":
+        stem = question.stem[:60]
+        question.delete()
+        messages.success(request, f"Deleted. {stem}")
+
+    elif action == "edit":
+        form = QuestionEditForm(
+            request.POST, instance=question, prefix=f"q{question.pk}"
+        )
+        if form.is_valid():
+            saved = form.save()
+            # The lock, set at the one moment a human changed the question.
+            saved.mark_edited()
+            messages.success(
+                request,
+                "Saved. This question is now yours — no generation cycle will "
+                "overwrite it.",
+            )
+        else:
+            messages.error(
+                request,
+                "That edit could not be saved: "
+                + "; ".join(
+                    f"{field}: {'; '.join(errors)}" for field, errors in form.errors.items()
+                ),
+            )
+
+    elif action == "move":
+        _move_question(request, exam, question)
+
+    elif action in REVISION_MODES:
+        return _revise_question(request, exam, question, action)
+
+    else:
+        messages.error(request, f"There is no “{action}” action.")
+
+    return redirect(_review_url(exam))
+
+
+def _move_question(request, exam, question) -> None:
+    """Move this question's placement to the other form (M9's forms, M11's hand)."""
+    from .models import FormQuestion
+
+    target_pk = _int_or_none(request.POST.get("form_id"))
+    entry = question.form_entries.select_related("form").first()
+    if entry is None:
+        messages.warning(
+            request,
+            "This question is not on a form yet, so there is nothing to move. "
+            "Assemble the forms first.",
+        )
+        return
+    target = exam.forms.filter(pk=target_pk).exclude(pk=entry.form_id).first()
+    if target is None:
+        messages.warning(request, "Pick the other form to move this question to.")
+        return
+    if FormQuestion.objects.filter(form=target, question=question).exists():
+        messages.warning(
+            request, f"Form {target.label} already carries this question."
+        )
+        return
+    was = entry.form.label
+    entry.form = target
+    entry.position = target.entries.count()
+    entry.save(update_fields=["form", "position"])
+    messages.success(
+        request,
+        f"Moved from Form {was} to Form {target.label}. The comparison screen will "
+        f"show what that did to the two papers.",
+    )
+
+
+def _revise_question(request, exam, question, mode: str):
+    """Regenerate / make easier / make harder / clarify — through 2A and 3A.
+
+    A question the instructor edited is not regenerated on the first press: the
+    service raises, and this redirects back with the confirmation showing on
+    that card. The second press carries `confirmed`, and then it obeys.
+    """
+    from .services.revision import RevisionError, RevisionNeedsConfirmation, revise
+
+    confirmed = request.POST.get("confirmed") == "1"
+    try:
+        result = revise(question, mode, confirmed=confirmed)
+    except RevisionNeedsConfirmation as exc:
+        messages.warning(request, str(exc))
+        return redirect(_review_url(exam, confirm=question.pk, mode=mode))
+    except RevisionError as exc:
+        messages.error(request, str(exc))
+        return redirect(_review_url(exam))
+
+    messages.success(request, result.message)
+    return redirect(_review_url(exam))
+
+
+# --- M11: the deliverable -----------------------------------------------------
+
+
+@login_required
+def form_export(request, pk, exam_pk):
+    """Configure the paper, then download it — exam and answer key, separately.
+
+    GET shows the options. POST produces the file the button asked for. Two
+    buttons and two files, never one file with the answers at the back.
+    """
+    import os
+
+    from django.conf import settings
+    from django.core.files.storage import default_storage
+    from django.http import HttpResponse
+
+    from .services.export import ExportError, export_form
+
+    exam = _own_exam(request, pk, exam_pk)
+    saved_forms = list(exam.forms.prefetch_related("entries"))
+
+    if not saved_forms:
+        messages.warning(
+            request, "Assemble and save the forms before exporting them."
+        )
+        return redirect(reverse("exams:forms", args=[exam.course_id, exam.pk]))
+
+    if request.method == "POST":
+        form = ExportOptionsForm(request.POST, request.FILES, forms_available=saved_forms)
+        if form.is_valid():
+            target = exam.forms.filter(pk=form.cleaned_data["form_id"]).first()
+            logo_path = ""
+            logo = form.cleaned_data.get("logo")
+            if logo is not None:
+                stored = default_storage.save(f"logos/{logo.name}", logo)
+                logo_path = os.path.join(settings.MEDIA_ROOT, stored)
+            try:
+                files = export_form(target, options=form.options(logo_path=logo_path))
+            except ExportError as exc:
+                messages.error(request, str(exc))
+                return redirect(reverse("exams:export", args=[exam.course_id, exam.pk]))
+
+            wanted = "key" if request.POST.get("download") == "key" else "exam"
+            produced = next(item for item in files if item.kind == wanted)
+            response = HttpResponse(produced.content, content_type=produced.content_type)
+            response["Content-Disposition"] = f'attachment; filename="{produced.filename}"'
+            return response
+    else:
+        form = ExportOptionsForm(
+            forms_available=saved_forms,
+            initial={
+                "form_id": saved_forms[0].pk,
+                "institution": exam.course.instructor.get_full_name() and "" or "",
+            },
+        )
+
+    return render(
+        request,
+        "exams/export.html",
+        {"course": exam.course, "exam": exam, "form": form, "saved_forms": saved_forms},
     )

@@ -37,4 +37,14 @@ urlpatterns = [
         views.exam_compare,
         name="compare",
     ),
+    # M11 — the decision surface, then the deliverable. Every card action is one
+    # POST to one endpoint: the thing that changes is what the instructor
+    # decided, not which URL it went to.
+    path("courses/<int:pk>/exams/<int:exam_pk>/review/", views.question_review, name="review"),
+    path(
+        "courses/<int:pk>/exams/<int:exam_pk>/review/<int:question_pk>/",
+        views.question_action,
+        name="question_action",
+    ),
+    path("courses/<int:pk>/exams/<int:exam_pk>/export/", views.form_export, name="export"),
 ]

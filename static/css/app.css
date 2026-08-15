@@ -727,3 +727,96 @@ table.data td.num { font-family: var(--font-mono); }
 @media (max-width: 40rem) {
   .data--compare th[scope="row"] { max-width: 12rem; }
 }
+
+/* ---------- Question card — the review screen's signature (M11) ----------
+   The Decision Rail is `.card--rail` with a state class. Colour alone never
+   carries it: every card prints the state as a word beside the strip, and the
+   legend on the screen says what each colour means. */
+
+.question-card { padding-inline-start: var(--space-6); }
+.question-card.is-candidate { border-inline-start-color: var(--ink-400); }
+.question-card.is-attention { border-inline-start-color: var(--warn-600); }
+.question-card.is-approved  { border-inline-start-color: var(--ok-600); }
+.question-card.is-rejected  { border-inline-start-color: var(--danger-600); }
+.question-card.is-rejected .lead { text-decoration: line-through; color: var(--ink-400); }
+
+.question-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-block-end: var(--space-2);
+}
+
+/* "Your edit · locked" — the visible half of the hard rule. */
+.lock {
+  font-size: var(--fs-caption);
+  color: var(--accent-700);
+  border: 1px solid var(--accent-500);
+  background: var(--accent-100);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  white-space: nowrap;
+}
+
+.question-card .lead { max-width: var(--measure); margin-block-end: var(--space-3); }
+
+.options { list-style: none; padding: 0; margin: 0 0 var(--space-3); }
+.options li {
+  padding: var(--space-1) var(--space-3);
+  border-inline-start: 2px solid var(--hairline);
+  color: var(--ink-600);
+}
+.options li.is-correct { border-inline-start-color: var(--ok-600); color: var(--ink-900); }
+
+.meta-row {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--ink-600);
+  margin-block-end: var(--space-3);
+}
+
+.system-notes summary { color: var(--info-600); }
+.source-ref { color: var(--ink-400); }
+
+.question-actions { flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.question-actions form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.move-form select {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--surface-card);
+  color: var(--ink-900);
+  font: inherit;
+}
+
+.confirm { margin-block: var(--space-4); }
+.confirm .action-bar { margin-block-start: var(--space-3); }
+.edit-panel { margin-block: var(--space-4); }
+.edit-panel .field { margin-block-end: var(--space-4); }
+
+.rail-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  list-style: none;
+  padding: 0;
+  margin-block-start: var(--space-4);
+  font-size: var(--fs-caption);
+  color: var(--ink-600);
+}
+.rail-legend li { display: inline-flex; align-items: center; gap: var(--space-2); }
+.rail-swatch { width: 4px; height: 16px; border-radius: 2px; background: var(--ink-400); }
+.rail-swatch.is-attention { background: var(--warn-600); }
+.rail-swatch.is-approved  { background: var(--ok-600); }
+.rail-swatch.is-rejected  { background: var(--danger-600); }
+
+.filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-3); }
+.filters .pick { text-decoration: none; }
+.filters .pick.is-on { border-color: var(--accent-500); background: var(--accent-100); color: var(--ink-900); }
+
+@media (max-width: 40rem) {
+  .question-actions form { width: 100%; }
+  .question-actions .btn { flex: 1 1 auto; }
+}

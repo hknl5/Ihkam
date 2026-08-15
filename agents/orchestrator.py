@@ -39,6 +39,13 @@ review is stored as a `Question` with status `candidate`, exactly as M5 stores
 one — review passing is إحكام's opinion, and the instructor's approval is a
 different act. What M8 guarantees is only this: nothing reaches M9 that was not
 reviewed.
+
+**M11 adds a sixth rule: an instructor-edited question is untouchable here.**
+`locked_questions` are carried through a run unchanged and stay in the pool. The
+loop does not regenerate over them, does not ask, and does not say anything —
+the instructor did not request this run, so it has nothing to tell them. A
+regeneration they *do* request goes through `exams/services/revision.py`, which
+warns first and then obeys.
 """
 
 from __future__ import annotations
@@ -84,6 +91,11 @@ MAX_GAP_FILL_ROUNDS = 3
 
 PASSED = ItemRun.Status.PASSED
 NEEDS_ATTENTION = ItemRun.Status.NEEDS_ATTENTION
+
+#: What the attempt log says about a question this run did not write. It is in
+#: the log because it is in the pool, and it is in the pool because an
+#: instructor edited it and إحكام does not overwrite that.
+CARRIED_NOTE = "Carried unchanged: this question was edited by the instructor."
 
 
 # --- What one attempt was ----------------------------------------------------
@@ -143,6 +155,9 @@ class ItemResult:
     #: than investigating.
     unreachable: bool = False
     record: ItemRun | None = None
+    #: Instructor-edited questions this run preserved rather than regenerated.
+    #: Empty on every run that met no locked question, which is most of them.
+    carried: list = field(default_factory=list)
 
     @property
     def required(self) -> int:
@@ -463,6 +478,35 @@ def persist_item(result: ItemResult, *, exam=None, row=None) -> ItemRun:
                 for attempt in result.attempts
             ]
         )
+        # M11's hard rule, held at the one place that could break it. Carried
+        # attempts are marked round 0 — they belong to no round of this run,
+        # because this run did not produce them — so "how many rounds did this
+        # item take" stays a true answer.
+        carried = _carry_locked(result, exam=exam, row=row)
+        if carried:
+            QuestionAttempt.objects.bulk_create(
+                [
+                    QuestionAttempt(
+                        item_run=record,
+                        round=0,
+                        outcome=QuestionAttempt.Outcome.PASSED,
+                        stem=question.stem,
+                        question=question,
+                        notes=[CARRIED_NOTE],
+                        failed_checks=[],
+                        model_checked=False,
+                    )
+                    for question in carried
+                ]
+            )
+            record.approved_count = record.approved_count + len(carried)
+            record.save(update_fields=["approved_count", "updated_at"])
+            logger.info(
+                "Carried %s instructor-edited question(s) for '%s' — the loop left them alone.",
+                len(carried),
+                item.topic_name,
+            )
+        result.carried = carried
     result.record = record
     return record
 
@@ -473,11 +517,49 @@ def _row(row_id):
     return BlueprintRow.objects.filter(pk=row_id).select_related("blueprint__exam").first()
 
 
+def locked_questions(*, exam, row):
+    """Questions on this row that an instructor has edited (M11's hard rule).
+
+    The automatic loop must leave these exactly as they are. It never rewrote a
+    stored question in the first place, but that alone was not enough: this
+    module replaces an item's attempt log on every run, and M9 reads the pool
+    *through* those attempts. An instructor-edited question whose stem no longer
+    matches anything the model wrote would therefore have quietly dropped out of
+    the pool on the next automatic pass — an edit lost by bookkeeping rather
+    than by an overwrite, which is the same thing to the instructor.
+
+    So they are carried: kept in the log, kept in the pool, and never touched.
+    Silently, because the instructor did not ask for this run.
+    """
+    if row is None or exam is None:
+        return []
+    return list(
+        Question.objects.filter(exam=exam, blueprint_row=row, instructor_edited=True)
+        .exclude(status=Question.Status.REJECTED)
+        .order_by("position", "pk")
+    )
+
+
+def _carry_locked(result: ItemResult, *, exam, row) -> list[Question]:
+    """The locked questions this run must preserve, minus any it re-produced."""
+    already = {question.pk for question in result.questions if question is not None}
+    return [
+        question
+        for question in locked_questions(exam=exam, row=row)
+        if question.pk not in already
+    ]
+
+
 def _store_approved(result: ItemResult, *, exam, row) -> None:
     """Store the passing candidates as `Question` rows, without duplicating.
 
     Only attempts that passed review are stored. A rejected candidate is a fact
     in the log, not a row an instructor could stumble into approving.
+
+    An instructor-edited question is never in `fresh` and never updated here:
+    matching is by stem, and a question the instructor rewrote is matched by its
+    own current stem or not at all. Either way this function only ever *creates*
+    rows, so a locked question cannot be overwritten by it.
     """
     from agents.review import normalise_option
 

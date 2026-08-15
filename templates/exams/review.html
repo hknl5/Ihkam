@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Review — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+{# M11's screen: the one where the instructor decides. Everything before this
+   was إحكام preparing a draft; approval is theirs, and so is rejection. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:list' course.pk %}">Exams</a>
+  <span aria-hidden="true">/</span>
+  <span>Review</span>
+</nav>
+
+<div class="page-head">
+  <h1>Review</h1>
+  <p>
+    إحكام wrote these and checked them. Which of them becomes an exam is your
+    decision. Anything you edit here is yours from that moment — no generation
+    cycle will write over it.
+  </p>
+</div>
+
+<div class="card">
+  <p class="caption">
+    {{ exam.display_title }} ·
+    <span class="num">{{ counts.candidate }}</span> candidate ·
+    <span class="num">{{ counts.approved }}</span> approved ·
+    <span class="num">{{ counts.rejected }}</span> rejected
+  </p>
+  <nav class="filters" aria-label="Filter by decision">
+    <a class="pick {% if not status %}is-on{% endif %}" href="{% url 'exams:review' course.pk exam.pk %}">All</a>
+    {% for value, label in statuses %}
+      <a class="pick {% if status == value %}is-on{% endif %}"
+         href="{% url 'exams:review' course.pk exam.pk %}?status={{ value }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <div class="action-bar">
+    <a class="btn btn--secondary" href="{% url 'exams:forms' course.pk exam.pk %}">Forms</a>
+    <a class="btn btn--secondary" href="{% url 'exams:compare' course.pk exam.pk %}">Compare</a>
+    <a class="btn btn--secondary" href="{% url 'exams:export' course.pk exam.pk %}">Export</a>
+  </div>
+</div>
+
+{# The rail's legend. Colour carries the state at a glance; this is what says
+   what each colour means, and every card repeats the word beside the strip. #}
+<ul class="rail-legend" aria-label="What the rail colours mean">
+  <li><span class="rail-swatch is-candidate" aria-hidden="true"></span> Candidate — undecided</li>
+  <li><span class="rail-swatch is-attention" aria-hidden="true"></span> Needs attention</li>
+  <li><span class="rail-swatch is-approved" aria-hidden="true"></span> Approved by you</li>
+  <li><span class="rail-swatch is-rejected" aria-hidden="true"></span> Rejected by you</li>
+</ul>
+
+{% if cards %}
+  <div class="stack stack--loose" style="margin-block-start: var(--space-6);">
+    {% for card in cards %}
+      {% include "exams/partials/question_card.html" with card=card %}
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <h2>Nothing to review here</h2>
+    <p>
+      {% if status %}No question has that decision yet.{% else %}
+      This exam has no questions yet — run the generation loop first.{% endif %}
+    </p>
+    <a class="btn btn--primary" href="{% url 'exams:plan' course.pk exam.pk %}">Go to the plan</a>
+  </div>
+{% endif %}
+{% endblock %}

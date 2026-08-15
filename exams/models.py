@@ -252,6 +252,17 @@ class Question(models.Model):
     #: distinguishable. Set by Python, never by a model, and never auto-fixed.
     mark_sum_ok = models.BooleanField(null=True, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.CANDIDATE)
+    #: Set the moment an instructor saves an edit to this question (M11), and
+    #: never set by any model or loop. It is the lock the hard rule rests on:
+    #: the automatic correction loop leaves a locked question exactly as it is
+    #: and does not regenerate over it, silently, because the instructor did not
+    #: ask for a regeneration. A regeneration the instructor *does* ask for
+    #: warns first and then obeys — see `exams/services/revision.py`.
+    #:
+    #: Stored as a flag rather than inferred from `updated_at`, because a status
+    #: change is also an update and "approved" is not "edited".
+    instructor_edited = models.BooleanField(default=False)
+    edited_at = models.DateTimeField(null=True, blank=True)
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -265,6 +276,51 @@ class Question(models.Model):
     @property
     def is_candidate(self) -> bool:
         return self.status == self.Status.CANDIDATE
+
+    @property
+    def is_approved(self) -> bool:
+        return self.status == self.Status.APPROVED
+
+    @property
+    def is_rejected(self) -> bool:
+        return self.status == self.Status.REJECTED
+
+    @property
+    def is_locked(self) -> bool:
+        """Whether a generation cycle must leave this question alone."""
+        return self.instructor_edited
+
+    def mark_edited(self, *, save: bool = True) -> None:
+        """Record that a human changed this question. Only views call this."""
+        from django.utils import timezone
+
+        self.instructor_edited = True
+        self.edited_at = timezone.now()
+        if save:
+            self.save(update_fields=["instructor_edited", "edited_at", "updated_at"])
+
+    @property
+    def rail_state(self) -> str:
+        """The Decision Rail's state for this question (§5's signature element).
+
+        One place decides it, so the card, the list and the tests cannot
+        disagree about what colour a question is:
+
+        * `rejected` — the instructor said no;
+        * `approved` — the instructor said yes;
+        * `attention` — nobody has decided yet *and* something is flagged: an
+          answer key whose marks do not add up, or a question quoting an OCR
+          transcription. A candidate with nothing flagged is not "attention",
+          it is simply undecided;
+        * `candidate` — undecided, nothing flagged.
+        """
+        if self.is_rejected:
+            return "rejected"
+        if self.is_approved:
+            return "approved"
+        if self.needs_mark_review or self.from_ocr:
+            return "attention"
+        return "candidate"
 
     @property
     def key(self):
