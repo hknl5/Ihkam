@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}Compare forms — {{ exam.display_title }} — إحكام{% endblock %}
 
@@ -30,6 +31,8 @@
   </p>
 </div>
 
+{% stepper "compare" course=course exam=exam %}
+
 {% if not forms %}
   <div class="empty-state">
     <h2>No forms have been saved yet</h2>
@@ -40,6 +43,10 @@
   <div class="banner banner--warn" role="status">
     <span class="banner__label">One form.</span>
     <span>{{ report.summary }}</span>
+  </div>
+  <div class="action-bar">
+    <a class="btn btn--primary" href="{% url 'exams:export' course.pk exam.pk %}">Export the paper</a>
+    <a class="btn btn--secondary" href="{% url 'exams:forms' course.pk exam.pk %}">Back to forms</a>
   </div>
 {% else %}
 
@@ -65,6 +72,13 @@
         </span>
       </div>
     </form>
+    {# Forward, out of what used to be the last screen with no way on to the
+       deliverable it was checking. #}
+    <div class="action-bar">
+      <a class="btn btn--primary" href="{% url 'exams:export' course.pk exam.pk %}">Export the papers</a>
+      <a class="btn btn--secondary" href="{% url 'exams:review' course.pk exam.pk %}">Back to review</a>
+      <a class="btn btn--ghost" href="{% url 'exams:forms' course.pk exam.pk %}">Re-assemble the forms</a>
+    </div>
   </div>
 
   {# --- إحكام notes -------------------------------------------------------- #}

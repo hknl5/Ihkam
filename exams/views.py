@@ -10,6 +10,7 @@ a distribution, see it fail, and walk away without having changed anything.
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -67,7 +68,10 @@ def exam_list(request, pk):
     else:
         form = ExamForm()
 
-    exams = list(course.exams.all())
+    # `written` is what decides where an exam's button goes: an exam with no
+    # questions opens at Generate, one with questions opens at Review. Counting
+    # it here keeps that decision out of the template.
+    exams = list(course.exams.annotate(written=Count("questions")))
     return render(
         request,
         "exams/exam_list.html",
@@ -101,7 +105,16 @@ def exam_sharing_option(request, pk):
 
 def _editor_context(request, exam, *, formset=None, report=None) -> dict:
     blueprint = getattr(exam, "blueprint", None)
+    saved_report = validate_blueprint(blueprint) if blueprint else None
     return {
+        # Whether Generate can run is decided against what is *saved*, never
+        # against the table currently on screen: the loop reads the database, so
+        # an editor full of good numbers that has not been saved is not ready.
+        "can_generate": bool(
+            blueprint is not None and saved_report.is_valid and blueprint.rows.exists()
+        ),
+        "saved_report": saved_report,
+        "existing": exam.questions.count(),
         "course": exam.course,
         "exam": exam,
         "blueprint": blueprint,
@@ -246,6 +259,128 @@ def blueprint_plan(request, pk, exam_pk):
         "exams/plan.html",
         {"course": exam.course, "exam": exam, "blueprint": board, "plan": plan, "error": error},
     )
+
+
+# --- M11.5: the generate step -------------------------------------------------
+
+
+def _attention_lines(run) -> list[str]:
+    """Why each unfinished item stopped, in the instructor's words.
+
+    An item that produced nothing has a reason — no passages behind the topic, an
+    unsupported question type, the retry cap — and that reason is the only useful
+    thing to say on return. Coming back to an empty Review screen with a cheerful
+    message is the failure this exists to prevent.
+    """
+    lines = []
+    for item in run.items_needing_attention:
+        why = item.error or (
+            f"only {item.approved_count} of {item.required} passed review after "
+            f"{item.rounds} round{'s' if item.rounds != 1 else ''}"
+        )
+        lines.append(f"{item.item.topic_name} — {why}")
+    return lines
+
+
+@login_required
+def exam_generate(request, pk, exam_pk):
+    """Run the correction loop over this exam's blueprint (M8), from a button.
+
+    Until M11.5 the loop had no trigger outside `manage.py orchestrate_probe`,
+    which meant a specced exam could never become questions from the UI.
+
+    The POST blocks: one model call per row, plus a gap-fill round for anything
+    short of its count. That is minutes, not seconds, so the button disables
+    itself and says what it is doing — a screen that looks frozen is a screen the
+    instructor reloads, and a reload here spends the calls twice.
+
+    Nothing is generated from a blueprint that does not add up. The loop would
+    refuse anyway (Agent 1A raises `BlueprintNotReady`), but refusing here sends
+    the instructor to the editor with the arithmetic in front of them instead of
+    to an error.
+    """
+    exam = _own_exam(request, pk, exam_pk)
+    board = getattr(exam, "blueprint", None)
+    report = validate_blueprint(board) if board is not None else None
+    can_generate = bool(board is not None and report.is_valid and board.rows.exists())
+
+    if request.method == "POST":
+        if board is None:
+            messages.warning(
+                request,
+                "This exam has no blueprint yet, so there is nothing to generate "
+                "from. Plan it first.",
+            )
+            return redirect(_blueprint_url(exam))
+        if not can_generate:
+            messages.warning(
+                request,
+                "Nothing was generated: this blueprint does not add up yet. "
+                + report.summary,
+            )
+            return redirect(_blueprint_url(exam))
+
+        from agents.orchestrator import OrchestrationError, run_exam
+        from courses.services.retrieval import RetrievalError
+
+        try:
+            run = run_exam(exam)
+        except (OrchestrationError, RetrievalError) as exc:
+            messages.error(request, f"The generation run stopped: {exc}")
+            return redirect(_generate_url(exam))
+
+        return _report_run(request, exam, run)
+
+    return render(
+        request,
+        "exams/generate.html",
+        {
+            "course": exam.course,
+            "exam": exam,
+            "blueprint": board,
+            "report": report,
+            "can_generate": can_generate,
+            "existing": exam.questions.count(),
+        },
+    )
+
+
+def _generate_url(exam) -> str:
+    return reverse("exams:generate", args=[exam.course_id, exam.pk])
+
+
+def _report_run(request, exam, run):
+    """Say what the run produced, then land where the instructor can act on it."""
+    produced = len(run.questions)
+    attention = _attention_lines(run)
+
+    if run.aborted:
+        messages.error(
+            request,
+            f"The run stopped early — the model could not be reached. {run.aborted} "
+            f"{produced} question{'s' if produced != 1 else ''} written before it "
+            f"stopped {'are' if produced != 1 else 'is'} saved; press Generate again "
+            f"to carry on.",
+        )
+    elif attention:
+        messages.warning(
+            request,
+            f"{produced} question{'s' if produced != 1 else ''} written, and "
+            f"{len(attention)} row{'s' if len(attention) != 1 else ''} needs manual "
+            f"attention: " + "; ".join(attention) + ".",
+        )
+    else:
+        messages.success(
+            request,
+            f"{produced} question{'s' if produced != 1 else ''} written and checked. "
+            f"None of them is an exam question until you say so.",
+        )
+
+    # Nothing to review means Review has nothing to show, so the instructor stays
+    # here with the reasons rather than being sent to an empty screen.
+    if not exam.questions.exists():
+        return redirect(_generate_url(exam))
+    return redirect(_review_url(exam))
 
 
 @login_required

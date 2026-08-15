@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}Topics — {{ course.code }} — إحكام{% endblock %}
 
@@ -20,14 +21,7 @@
   </p>
 </div>
 
-<ol class="stepper" aria-label="Where you are">
-  <li class="is-done">Course</li>
-  <li class="is-done">Upload</li>
-  <li class="is-current">Topics</li>
-  <li><a href="{% url 'exams:list' course.pk %}">Blueprint</a></li>
-  <li>Generate</li>
-  <li>Review</li>
-</ol>
+{% stepper "topics" course=course %}
 
 <dl class="tally" aria-label="What this list was built from">
   <div>

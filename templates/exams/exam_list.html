@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 {% load static %}
 
 {% block title %}Exams — {{ course.code }} — إحكام{% endblock %}
@@ -21,14 +22,7 @@
   </p>
 </div>
 
-<ol class="stepper" aria-label="Where you are">
-  <li class="is-done">Course</li>
-  <li class="is-done">Upload</li>
-  <li class="is-done">Topics</li>
-  <li class="is-current">Exam</li>
-  <li>Blueprint</li>
-  <li>Generate</li>
-</ol>
+{% stepper "spec" course=course %}
 
 <div class="split" style="margin-block-start: var(--space-8);">
   <section aria-labelledby="exams-heading">
@@ -58,13 +52,31 @@
                   <span class="num">{{ exam.number_of_forms }}</span> form{{ exam.number_of_forms|pluralize }} ·
                   {{ exam.get_language_display }}
                 </p>
-                {% if exam.has_blueprint %}
-                  <p class="status status--ok">Blueprint started</p>
+                {% if exam.written %}
+                  <p class="status status--ok">
+                    <span class="num">{{ exam.written }}</span>
+                    question{{ exam.written|pluralize }} written
+                  </p>
+                {% elif exam.has_blueprint %}
+                  <p class="status status--ok">Blueprint started — nothing written yet</p>
                 {% else %}
                   <p class="status status--warn">No blueprint yet</p>
                 {% endif %}
               </div>
+              {# Each exam opens at the step it is actually at, so the course
+                 screen is a way back into the journey rather than a list. #}
               <div class="topic-card__actions">
+                {% if exam.written %}
+                  <a class="btn btn--primary" href="{% url 'exams:review' course.pk exam.pk %}">
+                    Review questions
+                    <span class="visually-hidden"> — {{ exam.display_title }}</span>
+                  </a>
+                {% elif exam.has_blueprint %}
+                  <a class="btn btn--primary" href="{% url 'exams:generate' course.pk exam.pk %}">
+                    Generate questions
+                    <span class="visually-hidden"> — {{ exam.display_title }}</span>
+                  </a>
+                {% endif %}
                 <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">
                   {% if exam.has_blueprint %}Open blueprint{% else %}Plan it{% endif %}
                   <span class="visually-hidden"> — {{ exam.display_title }}</span>

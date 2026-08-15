@@ -1,0 +1,31 @@
+{% load static %}
+{# The one trigger for M8's loop. Included on the blueprint editor and on the
+   Generate screen — never both on one page, but the script guards itself anyway.
+
+   The press blocks for minutes. What stops that from reading as a hang is the
+   button answering immediately: it disables, it says what it is doing, and it
+   keeps saying it until the server replies. #}
+<form method="post" action="{% url 'exams:generate' course.pk exam.pk %}" data-generate>
+  {% csrf_token %}
+  <div class="action-bar">
+    <button type="submit" class="btn btn--primary" data-generate-button
+            {% if not can_generate %}disabled{% endif %}>
+      <span class="spinner" aria-hidden="true" hidden data-generate-spinner></span>
+      <span data-generate-label>
+        {% if existing %}Generate again{% else %}Generate questions{% endif %}
+      </span>
+    </button>
+  </div>
+  <p class="caption" role="status" data-generate-note hidden>
+    إحكام is writing and checking one row at a time. This takes a few minutes —
+    leave this page open; it will move to Review on its own.
+  </p>
+  {% if not can_generate %}
+    <p class="caption">
+      Generation needs a saved blueprint that adds up.
+      {% if report %}{{ report.summary }}{% endif %}
+      <a href="{% url 'exams:blueprint' course.pk exam.pk %}">Fix the blueprint</a>.
+    </p>
+  {% endif %}
+</form>
+<script src="{% static 'js/generate.js' %}" defer></script>

@@ -330,6 +330,31 @@ table.data td.num { font-family: var(--font-mono); }
 .stepper li { color: var(--ink-600); }
 .stepper .is-done { color: var(--ok-600); }
 .stepper .is-current { color: var(--accent-700); font-weight: 600; }
+/* A step is a link when its screen can be opened; it inherits the state colour
+   so the stepper reads as one line rather than a row of blue links. */
+.stepper a { color: inherit; text-decoration-color: var(--hairline); }
+.stepper a:hover { text-decoration-color: currentColor; }
+
+/* ---------- In-progress spinner ---------- */
+
+.spinner {
+  display: inline-block;
+  inline-size: .85em;
+  block-size: .85em;
+  margin-inline-end: var(--space-2);
+  vertical-align: -.1em;
+  border: 2px solid currentColor;
+  border-block-start-color: transparent;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+.spinner[hidden] { display: none; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
 
 /* ---------- Utilities ---------- */
 

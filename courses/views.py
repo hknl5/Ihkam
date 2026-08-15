@@ -92,7 +92,14 @@ def detail(request, pk):
     return render(
         request,
         "courses/detail.html",
-        {"course": course, "form": form, "files": course.files.all()},
+        {
+            "course": course,
+            "form": form,
+            "files": course.files.all(),
+            # So the course screen can offer the way back into an exam already
+            # under way, rather than only the way forward into topics.
+            "exam_count": course.exams.count(),
+        },
     )
 
 

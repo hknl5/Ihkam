@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}{{ course.code }} — إحكام{% endblock %}
 
@@ -18,14 +19,7 @@
   </p>
 </div>
 
-<ol class="stepper" aria-label="Where you are">
-  <li class="is-done">Course</li>
-  <li class="is-current">Upload</li>
-  <li><a href="{% url 'courses:topics' course.pk %}">Topics</a></li>
-  <li><a href="{% url 'exams:list' course.pk %}">Blueprint</a></li>
-  <li>Generate</li>
-  <li>Review</li>
-</ol>
+{% stepper "upload" course=course %}
 
 <div class="split" style="margin-block-start: var(--space-8);">
   <section aria-labelledby="material-heading">
@@ -126,6 +120,15 @@
     </p>
     <div class="action-bar">
       <a class="btn btn--primary" href="{% url 'courses:topics' course.pk %}">Review topics</a>
+      {# The way back in. An instructor returning to a course mid-journey wants
+         the exam they left, not the topic list they already confirmed. #}
+      <a class="btn btn--secondary" href="{% url 'exams:list' course.pk %}">
+        {% if exam_count %}
+          This course's <span class="num">{{ exam_count }}</span> exam{{ exam_count|pluralize }}
+        {% else %}
+          Define an exam
+        {% endif %}
+      </a>
     </div>
   </div>
 {% endif %}

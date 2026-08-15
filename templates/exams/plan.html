@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}Reference passages — {{ exam.display_title }} — إحكام{% endblock %}
 
@@ -22,6 +23,8 @@
     before it is.
   </p>
 </div>
+
+{% stepper "generate" course=course exam=exam %}
 
 {% if error %}
   <div class="banner banner--danger" role="status">

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}Forms — {{ exam.display_title }} — إحكام{% endblock %}
 
@@ -25,10 +26,17 @@
   </p>
 </div>
 
+{% stepper "forms" course=course exam=exam %}
+
 {% if error %}
   <div class="banner banner--danger" role="status">
     <span class="banner__label">Nothing to assemble.</span>
     <span>{{ error }}</span>
+  </div>
+  {# A refusal still has to say where to go next, or the screen is a dead end. #}
+  <div class="action-bar">
+    <a class="btn btn--primary" href="{% url 'exams:review' course.pk exam.pk %}">Back to review</a>
+    <a class="btn btn--secondary" href="{% url 'exams:generate' course.pk exam.pk %}">Generate more questions</a>
   </div>
 {% else %}
 
@@ -46,14 +54,22 @@
       {% csrf_token %}
       <div class="action-bar">
         <button type="submit" class="btn btn--primary" {% if not assembly.is_complete %}disabled{% endif %}>
-          Save these forms
+          Assemble &amp; save these forms
         </button>
       </div>
     </form>
+    {# Forward is always a press, saved or not: Compare says plainly that
+       nothing has been saved yet, which is more use than a hidden button. #}
+    <div class="action-bar">
+      <a class="btn {% if saved_forms %}btn--primary{% else %}btn--secondary{% endif %}"
+         href="{% url 'exams:compare' course.pk exam.pk %}">Compare the forms</a>
+      <a class="btn btn--secondary" href="{% url 'exams:export' course.pk exam.pk %}">Export</a>
+      <a class="btn btn--ghost" href="{% url 'exams:review' course.pk exam.pk %}">Back to review</a>
+    </div>
     {% if saved_forms %}
       <p class="caption">
-        <a href="{% url 'exams:compare' course.pk exam.pk %}">Compare the saved forms</a> —
-        coverage, expected difficulty, expected time, leakage and near-duplicates.
+        Compare reads the saved forms — coverage, expected difficulty, expected
+        time, leakage and near-duplicates.
       </p>
     {% endif %}
   </div>

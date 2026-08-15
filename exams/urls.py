@@ -21,6 +21,9 @@ urlpatterns = [
         name="blueprint_autobuild",
     ),
     path("courses/<int:pk>/exams/<int:exam_pk>/plan/", views.blueprint_plan, name="plan"),
+    # M11.5 — the Generate step. GET is the screen the stepper points at; POST is
+    # the M8 loop itself, and it blocks until every row is written or given up on.
+    path("courses/<int:pk>/exams/<int:exam_pk>/generate/", views.exam_generate, name="generate"),
     # M9 — the sharing question is revealed by the same code that decides
     # whether it applies, so the screen and the server never disagree about it.
     path(

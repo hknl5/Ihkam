@@ -1,0 +1,14 @@
+{# The instructor journey, from exams/templatetags/journey.py. Never retyped. #}
+<ol class="stepper" aria-label="Where you are">
+  {% for item in items %}
+    <li class="{% if item.is_done %}is-done{% elif item.is_current %}is-current{% endif %}"
+        data-step="{{ item.slug }}"
+        {% if item.is_current %}aria-current="step"{% endif %}>
+      {% if item.href and not item.is_current %}
+        <a href="{{ item.href }}">{{ item.label }}</a>
+      {% else %}
+        {{ item.label }}
+      {% endif %}
+    </li>
+  {% endfor %}
+</ol>

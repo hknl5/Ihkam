@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 {% load static %}
 
 {% block title %}Blueprint — {{ exam.display_title }} — إحكام{% endblock %}
@@ -22,14 +23,7 @@
   </p>
 </div>
 
-<ol class="stepper" aria-label="Where you are">
-  <li class="is-done">Course</li>
-  <li class="is-done">Upload</li>
-  <li class="is-done">Topics</li>
-  <li class="is-current">Blueprint</li>
-  <li>Generate</li>
-  <li>Review</li>
-</ol>
+{% stepper "blueprint" course=course exam=exam %}
 
 <dl class="tally" aria-label="This exam's specification">
   <div>
@@ -191,6 +185,25 @@
     {% endif %}
   </div>
 </form>
+
+{# Forward, from the screen the instructor is already on. Before M11.5 the
+   blueprint led nowhere: the loop had no button anywhere in the product. #}
+<div class="card" style="margin-block-start: var(--space-8);">
+  <h2 class="section-title">Next — generate the questions</h2>
+  <p class="caption">
+    إحكام writes every row from your own material and reviews each candidate
+    before keeping it. It takes a few minutes, and it changes nothing you have
+    approved or edited.
+  </p>
+  {% include "exams/partials/generate_button.html" with report=saved_report %}
+  {% if existing %}
+    <div class="action-bar">
+      <a class="btn btn--secondary" href="{% url 'exams:review' course.pk exam.pk %}">
+        Review the <span class="num">{{ existing }}</span> question{{ existing|pluralize }} already written
+      </a>
+    </div>
+  {% endif %}
+</div>
 
 {% if blueprint and blueprint.rows.all %}
   <div class="card" style="margin-block-start: var(--space-8);">

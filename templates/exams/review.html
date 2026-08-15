@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load journey %}
 
 {% block title %}Review — {{ exam.display_title }} — إحكام{% endblock %}
 
@@ -24,6 +25,8 @@
   </p>
 </div>
 
+{% stepper "review" course=course exam=exam %}
+
 <div class="card">
   <p class="caption">
     {{ exam.display_title }} ·
@@ -39,9 +42,12 @@
     {% endfor %}
   </nav>
   <div class="action-bar">
-    <a class="btn btn--secondary" href="{% url 'exams:forms' course.pk exam.pk %}">Forms</a>
+    {# Forward is one press: Forms is the next step, the rest are where the
+       instructor may already have been. #}
+    <a class="btn btn--primary" href="{% url 'exams:forms' course.pk exam.pk %}">Assemble the forms</a>
     <a class="btn btn--secondary" href="{% url 'exams:compare' course.pk exam.pk %}">Compare</a>
     <a class="btn btn--secondary" href="{% url 'exams:export' course.pk exam.pk %}">Export</a>
+    <a class="btn btn--ghost" href="{% url 'exams:generate' course.pk exam.pk %}">Generate more</a>
   </div>
 </div>
 
@@ -65,9 +71,16 @@
     <h2>Nothing to review here</h2>
     <p>
       {% if status %}No question has that decision yet.{% else %}
-      This exam has no questions yet — run the generation loop first.{% endif %}
+      This exam has no questions yet — generate them first.{% endif %}
     </p>
-    <a class="btn btn--primary" href="{% url 'exams:plan' course.pk exam.pk %}">Go to the plan</a>
+    <div class="action-bar" style="justify-content: center;">
+      {% if status %}
+        <a class="btn btn--primary" href="{% url 'exams:review' course.pk exam.pk %}">Show every question</a>
+      {% else %}
+        <a class="btn btn--primary" href="{% url 'exams:generate' course.pk exam.pk %}">Generate questions</a>
+        <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">Back to blueprint</a>
+      {% endif %}
+    </div>
   </div>
 {% endif %}
 {% endblock %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load journey %}
+
+{% block title %}Generate — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+{# The step that had no screen until M11.5. Everything behind this button
+   already existed — Agent 1A grounds the blueprint, 2A writes, 3A reviews, and
+   a rejection goes back to 2A as the brief. What was missing was the press. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:list' course.pk %}">Exams</a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:blueprint' course.pk exam.pk %}">Blueprint</a>
+  <span aria-hidden="true">/</span>
+  <span>Generate</span>
+</nav>
+
+<div class="page-head">
+  <h1>Generate</h1>
+  <p>
+    إحكام writes one blueprint row at a time, from your own material, and reviews
+    every candidate before it keeps it. Anything that fails review is written
+    again against the note that rejected it. Nothing that comes out of this is an
+    exam question until you approve it.
+  </p>
+</div>
+
+{% stepper "generate" course=course exam=exam %}
+
+<div class="card" style="margin-block-start: var(--space-8);">
+  <p class="caption">
+    {{ exam.display_title }} ·
+    <span class="num">{{ exam.question_count }}</span> questions ·
+    <span class="num">{{ exam.total_score }}</span> marks ·
+    {{ exam.get_language_display }}
+  </p>
+
+  {% if blueprint %}
+    <p class="status {% if can_generate %}status--ok{% else %}status--warn{% endif %}">
+      {{ report.summary }}
+    </p>
+  {% else %}
+    <p class="status status--warn">
+      No blueprint yet — there is nothing to generate from.
+    </p>
+  {% endif %}
+
+  {% if existing %}
+    <p class="caption">
+      This exam already has <span class="num">{{ existing }}</span>
+      question{{ existing|pluralize }}. Generating again adds to the pool and
+      leaves anything you have edited exactly as you left it.
+    </p>
+  {% endif %}
+
+  {% include "exams/partials/generate_button.html" %}
+
+  <div class="action-bar">
+    <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">Back to blueprint</a>
+    <a class="btn btn--secondary" href="{% url 'exams:plan' course.pk exam.pk %}">See the passages first</a>
+    {% if existing %}
+      <a class="btn btn--secondary" href="{% url 'exams:review' course.pk exam.pk %}">Go to Review</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if blueprint %}
+  <section aria-labelledby="rows-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="rows-heading" class="section-title">What will be written</h2>
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th scope="col">Topic</th>
+            <th scope="col">Type</th>
+            <th scope="col">Level</th>
+            <th scope="col">Questions</th>
+            <th scope="col">Marks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in blueprint.rows.all %}
+            <tr>
+              <td dir="auto">{{ row.topic.name }}</td>
+              <td>{{ row.get_question_type_display }}</td>
+              <td>{{ row.get_level_display }}</td>
+              <td class="num">{{ row.count }}</td>
+              <td class="num">{{ row.marks }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5">This blueprint has no rows yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
