@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Forms — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+{# M9's diagnostic screen: enough to see that the two papers were built from one
+   blueprint and where the pool falls short. The side-by-side comparison an
+   instructor actually reviews from — with the convergence indicators — is M10. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:list' course.pk %}">Exams</a>
+  <span aria-hidden="true">/</span>
+  <span>Forms</span>
+</nav>
+
+<div class="page-head">
+  <h1>Forms</h1>
+  <p>
+    Both papers are built from the same blueprint, one row at a time — so topic,
+    type, level, count and marks match because nothing here is free to make them
+    differ. Expected time is the one estimate, and it is balanced, not measured.
+  </p>
+</div>
+
+{% if error %}
+  <div class="banner banner--danger" role="status">
+    <span class="banner__label">Nothing to assemble.</span>
+    <span>{{ error }}</span>
+  </div>
+{% else %}
+
+  <div class="card">
+    <p class="caption">
+      {{ exam.display_title }} ·
+      <span class="num">{{ exam.number_of_forms }}</span> form{{ exam.number_of_forms|pluralize }} ·
+      {{ exam.get_form_sharing_display }} ·
+      <span class="num">{{ assembly.pool_size }}</span> reviewed question{{ assembly.pool_size|pluralize }} in the pool
+    </p>
+    <p class="status {% if assembly.is_complete %}status--ok{% else %}status--warn{% endif %}">
+      {{ assembly.summary }}
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--primary" {% if not assembly.is_complete %}disabled{% endif %}>
+          Save these forms
+        </button>
+      </div>
+    </form>
+  </div>
+
+  {% if assembly.shortfalls %}
+    <section aria-labelledby="short-heading" style="margin-block-start: var(--space-8);">
+      <h2 id="short-heading" class="section-title">What is missing</h2>
+      <div class="stack">
+        {% for shortfall in assembly.shortfalls %}
+          <article class="card card--rail is-attention">
+            <p><strong>Form {{ shortfall.form_label }}</strong> · {{ shortfall.topic_name }}</p>
+            <p>{{ shortfall.message }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  <section aria-labelledby="dims-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="dims-heading" class="section-title">How the forms compare</h2>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Dimension</th>
+          {% for form in assembly.forms %}<th scope="col">Form {{ form.label }}</th>{% endfor %}
+          <th scope="col">Difference</th>
+          <th scope="col">Tolerance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dimension in assembly.dimensions %}
+          <tr>
+            <th scope="row">
+              {{ dimension.label }}
+              {% if dimension.by_construction %}
+                <span class="caption">by construction</span>
+              {% endif %}
+            </th>
+            {% for label, value in dimension.values.items %}
+              <td dir="auto">{{ value }}</td>
+            {% endfor %}
+            <td class="num">{{ dimension.spread }}</td>
+            <td class="num">
+              {{ dimension.tolerance }}
+              {% if not dimension.within_tolerance %}
+                <span class="status status--danger">over</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <div class="split" style="margin-block-start: var(--space-8);">
+    {% for form in assembly.forms %}
+      <section aria-label="Form {{ form.label }}">
+        <h2 class="section-title">
+          Form {{ form.label }} —
+          <span class="num">{{ form.question_count }}</span> questions,
+          <span class="num">{{ form.total_marks }}</span> marks,
+          about <span class="num">{{ form.expected_minutes }}</span> min
+        </h2>
+        <ol class="stack">
+          {% for item in form.items %}
+            <li class="card card--rail">
+              <p class="caption">
+                {{ item.topic_name }} ·
+                <span class="num">{{ item.marks }}</span> marks ·
+                about <span class="num">{{ item.minutes }}</span> min
+                {% if item.question_id in assembly.shared_question_ids %}
+                  · <span class="status status--warn">on both forms</span>
+                {% endif %}
+              </p>
+              <p dir="auto">{{ item.stem }}</p>
+            </li>
+          {% endfor %}
+        </ol>
+      </section>
+    {% endfor %}
+  </div>
+
+  {% if saved_forms %}
+    <p class="caption" style="margin-block-start: var(--space-6);">
+      Saved: {% for form in saved_forms %}Form {{ form.label }}
+      (<span class="num">{{ form.question_count }}</span> questions){% if not forloop.last %}, {% endif %}{% endfor %}.
+    </p>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -365,6 +365,15 @@ Build:
 **Manual test:** build Form A and Form B, eyeball that both cover the same topics with the same weights.
 **Success check:** the deterministic distribution matches on all listed dimensions within tolerance.
 
+> **M9 technical decisions:**
+> - **The blueprint row is the unit of assembly, so seven of the eight dimensions cannot drift.** A row is one topic, one type, one level, one count, one price; every form takes `row.count` questions out of that row's pool. Count, marks, topic, type, level, multi-step and numeric therefore match *exactly* — their tolerance is zero and it is earned, not chosen to make the check pass. "Similar by construction" is this, stated concretely.
+> - **Only expected time is scored, because only it is free.** Two MCQs on the same topic at the same level cost the same marks and take different minutes, so which surplus question goes to A is a real choice. `estimate_minutes` counts what can be counted — type, level, words to read, steps in the key — and never asks a model how hard a question is; that would be an opinion dressed as a number, which M10's honesty rule forbids.
+> - **The allocator is a seam with a documented contract**, not a strategy baked into the caller. `greedy_balanced` (longest-processing-time first, deterministic ties) is passed to `distribute` as `allocate=`; an optimizer that balances *across* rows replaces it without touching the models, the reporting, or the screens.
+> - **A shortfall is concentrated on the later form, and reported per row.** Two papers each missing one question are two papers that cannot be sat; a complete Form A and a Form B short by two is a finished paper plus a countable thing to generate. Each shortfall names the form, the topic, the count and both ways out — and `save_assembly` refuses to write an incomplete assembly at all, so a paper with a hole in it cannot reach a screen or an export.
+> - **Sharing is a permission, not a fallback.** With sharing on, the allocator still fills both forms from distinct questions first and reuses one only once the pool runs out. A row too thin for even one paper is still short, and says so instead of telling the instructor to enable a setting that is already on.
+> - **The sharing option is revealed by the same code that decides it applies.** A one-form exam is never asked how its forms relate; `_wants_multiple_forms` answers that for the first paint and for the HTMX endpoint alike, so the screen cannot offer an option the save path would ignore.
+> - **Marks are priced per slot, not per question.** A 14-mark row over 3 questions is 4.67 / 4.67 / 4.66 by the same largest-remainder rule `auto_build` uses; three rounded shares would put the form on 14.01 and make the paper disagree with the blueprint it was built from.
+
 ---
 
 #### M10 · Convergence checks + comparison screen

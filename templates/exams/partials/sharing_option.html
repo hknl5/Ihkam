@@ -1,0 +1,8 @@
+{# M9 — the sharing question, shown only when there is a second form to relate to.
+   The container is always returned so HTMX has something stable to swap; what
+   changes is whether it holds a question that applies. #}
+<div id="sharing-option">
+  {% if show %}
+    {% include "partials/field.html" with field=field %}
+  {% endif %}
+</div>

@@ -51,6 +51,29 @@ class Exam(models.Model):
     number_of_forms = models.PositiveIntegerField(
         default=1, help_text="Equivalent versions of this exam (A, B, …)."
     )
+
+    class FormSharing(models.TextChoices):
+        """How two forms of the same exam are allowed to relate (M9).
+
+        The instructor's call, not إحكام's. Fully separate is the stricter
+        paper and the default; sharing is the honest option for a course whose
+        core definitions belong on every version of the exam. It is also the
+        answer when the pool cannot cover two whole papers — but it is offered
+        as a choice, never applied quietly to rescue a thin pool.
+        """
+
+        SEPARATE = "separate", "Fully separate — no question appears on both"
+        SHARED = "shared", "Sharing allowed — core questions may appear on both"
+
+    #: Meaningless for a one-form exam, which is why the spec screen only shows
+    #: it once `number_of_forms` is more than one. Stored regardless, so raising
+    #: the form count later does not lose a choice already made.
+    form_sharing = models.CharField(
+        max_length=12,
+        choices=FormSharing.choices,
+        default=FormSharing.SEPARATE,
+        help_text="Whether the forms may share questions.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -73,8 +96,22 @@ class Exam(models.Model):
 
     @property
     def form_labels(self) -> list[str]:
-        """"A", "B", … — one per form. Used from M10, defined with the count."""
+        """"A", "B", … — one per form. Used from M9, defined with the count."""
         return [chr(ord("A") + i) for i in range(self.number_of_forms)]
+
+    @property
+    def has_multiple_forms(self) -> bool:
+        """Whether the sharing question is even askable (M9's conditional reveal)."""
+        return self.number_of_forms > 1
+
+    @property
+    def forms_may_share(self) -> bool:
+        """One form cannot share with itself, whatever the stored setting says."""
+        return self.has_multiple_forms and self.form_sharing == self.FormSharing.SHARED
+
+    @property
+    def has_forms(self) -> bool:
+        return self.forms.exists()
 
 
 class Blueprint(models.Model):
@@ -373,3 +410,94 @@ class QuestionAttempt(models.Model):
     @property
     def note(self) -> str:
         return "\n".join(self.notes or [])
+
+
+class Form(models.Model):
+    """One assembled version of the exam — Form A, Form B (M9).
+
+    A form is a *selection*, not a copy: it points at questions in the reviewed
+    pool rather than duplicating them, so an instructor's edit to a question in
+    M11 reaches every form carrying it instead of drifting apart from itself.
+    Which questions those are is decided in `exams/services/forms.py` by plain
+    arithmetic over the blueprint — no model is involved in building a paper.
+
+    A `Form` row exists only for a *complete* assembly. `save_assembly` refuses
+    to write one that is short of questions, so a form on this table is a paper
+    that can be sat; a shortfall is reported on the screen and stays there.
+
+    `expected_minutes` and `total_marks` are stored as assembled rather than
+    recomputed on read, because they are what the instructor saw and agreed to.
+    """
+
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name="forms")
+    #: "A", "B" — the label as it is printed on the paper.
+    label = models.CharField(max_length=4)
+    position = models.PositiveIntegerField(default=0)
+    #: What the exam's sharing setting was when this form was built. Copied
+    #: rather than followed, so a form still describes how it was made after the
+    #: setting is changed.
+    sharing_allowed = models.BooleanField(default=False)
+    #: A planning estimate summed over the questions — never a claim about how
+    #: long students will take. M10 keeps the same naming rule.
+    expected_minutes = models.DecimalField(max_digits=7, decimal_places=2, default=Decimal("0"))
+    total_marks = models.DecimalField(max_digits=7, decimal_places=2, default=Decimal("0"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["exam", "label"], name="one_form_per_label_per_exam")
+        ]
+
+    def __str__(self) -> str:
+        return f"Form {self.label} — {self.exam}"
+
+    @property
+    def question_count(self) -> int:
+        return self.entries.count()
+
+    @property
+    def questions(self):
+        """The questions on this paper, in the order they are printed."""
+        return Question.objects.filter(form_entries__form=self).order_by(
+            "form_entries__position"
+        )
+
+
+class FormQuestion(models.Model):
+    """One question's place on one form.
+
+    A through table rather than a many-to-many field because the *placement*
+    carries information the question does not: where it sits on this paper, and
+    what it is worth here. It is also what makes sharing expressible at all —
+    the same question on Form A and Form B is two placements of one question,
+    which is exactly what the instructor chose when they allowed sharing.
+    """
+
+    form = models.ForeignKey(Form, on_delete=models.CASCADE, related_name="entries")
+    question = models.ForeignKey(
+        Question, on_delete=models.CASCADE, related_name="form_entries"
+    )
+    #: Nullable for the same reason it is on `Question`: a re-plan must not
+    #: silently delete an assembled paper.
+    blueprint_row = models.ForeignKey(
+        BlueprintRow, on_delete=models.SET_NULL, null=True, blank=True, related_name="form_entries"
+    )
+    position = models.PositiveIntegerField(default=0)
+    #: The per-question estimate this placement contributed, and the marks the
+    #: blueprint row prices it at. Stored so a form's totals can be read back
+    #: without re-deriving them from a row that may since have changed.
+    expected_minutes = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0"))
+    marks = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0"))
+
+    class Meta:
+        ordering = ["position", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["form", "question"], name="one_placement_per_question_per_form"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.form.label}{self.position + 1}. {self.question.stem[:60]}"

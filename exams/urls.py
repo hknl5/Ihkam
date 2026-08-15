@@ -21,4 +21,12 @@ urlpatterns = [
         name="blueprint_autobuild",
     ),
     path("courses/<int:pk>/exams/<int:exam_pk>/plan/", views.blueprint_plan, name="plan"),
+    # M9 — the sharing question is revealed by the same code that decides
+    # whether it applies, so the screen and the server never disagree about it.
+    path(
+        "courses/<int:pk>/exams/sharing-option/",
+        views.exam_sharing_option,
+        name="exam_sharing_option",
+    ),
+    path("courses/<int:pk>/exams/<int:exam_pk>/forms/", views.exam_forms, name="forms"),
 ]

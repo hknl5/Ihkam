@@ -5,6 +5,27 @@ from django.forms import modelformset_factory
 
 from .models import Blueprint, BlueprintRow, Exam
 from .services.blueprint import RowSpec, eligible_topics
+from .services.forms import MAX_FORMS
+
+
+def _wants_multiple_forms(source, form=None) -> bool:
+    """Does this data ask for more than one form?
+
+    Reads whatever the caller has — posted strings, form initials, or an empty
+    mapping — and falls back to the field's own default rather than assuming
+    one. Unreadable input is treated as one form: an instructor mid-keystroke
+    has not asked for a second paper.
+    """
+    raw = (source or {}).get("number_of_forms")
+    if raw in (None, ""):
+        if form is not None:
+            raw = form.fields["number_of_forms"].initial
+        if raw in (None, ""):
+            raw = Exam._meta.get_field("number_of_forms").default
+    try:
+        return int(raw) > 1
+    except (TypeError, ValueError):
+        return False
 
 
 class ExamForm(forms.ModelForm):
@@ -20,6 +41,7 @@ class ExamForm(forms.ModelForm):
             "duration_minutes",
             "language",
             "number_of_forms",
+            "form_sharing",
         )
         labels = {
             "title": "Name (optional)",
@@ -29,12 +51,38 @@ class ExamForm(forms.ModelForm):
             "duration_minutes": "Duration (minutes)",
             "language": "Question language",
             "number_of_forms": "Forms",
+            "form_sharing": "How the forms relate",
         }
         help_texts = {
             "title": "For telling three quizzes apart. Left blank, the type is used.",
-            "number_of_forms": "Equivalent versions — A, B, … Balancing them comes later.",
+            "number_of_forms": f"Equivalent versions — A, B. At most {MAX_FORMS} for now.",
+            "form_sharing": (
+                "Fully separate needs twice the questions. If the pool cannot cover "
+                "both papers, إحكام says so rather than quietly reusing a question."
+            ),
         }
-        widgets = {"title": forms.TextInput(attrs={"placeholder": "Midterm — week 7"})}
+        widgets = {
+            "title": forms.TextInput(attrs={"placeholder": "Midterm — week 7"}),
+            "form_sharing": forms.RadioSelect,
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The field is asked for only when there is a second form to relate to.
+        # It stays in `fields` either way, so a posted value is still validated
+        # and stored — hiding a question is not the same as discarding it.
+        self.fields["number_of_forms"].widget.attrs.update({"min": "1", "max": str(MAX_FORMS)})
+        self.fields["form_sharing"].required = False
+
+    @property
+    def show_sharing(self) -> bool:
+        """Whether the sharing question applies to what is currently typed.
+
+        Read by the template on first paint and by `exam_sharing_option` on
+        every change of the form count, so the reveal is decided in one place
+        rather than duplicated in JavaScript.
+        """
+        return _wants_multiple_forms(self.data if self.is_bound else self.initial, self)
 
     def clean_total_score(self):
         return self._positive("total_score", "An exam is out of at least one mark.")
@@ -46,7 +94,22 @@ class ExamForm(forms.ModelForm):
         return self._positive("duration_minutes", "An exam lasts at least one minute.")
 
     def clean_number_of_forms(self):
-        return self._positive("number_of_forms", "There is at least one form.")
+        value = self._positive("number_of_forms", "There is at least one form.")
+        if value is not None and value > MAX_FORMS:
+            raise forms.ValidationError(
+                f"إحكام builds at most {MAX_FORMS} forms from one blueprint. Two papers "
+                f"already need twice the questions; a third has nothing to draw on yet."
+            )
+        return value
+
+    def clean_form_sharing(self):
+        """An unanswered sharing question means the stricter paper, not nothing.
+
+        The field is hidden for a one-form exam and therefore posts empty. Empty
+        is not a valid choice, so it becomes the default here rather than a
+        validation error on a question the instructor was never asked.
+        """
+        return self.cleaned_data.get("form_sharing") or Exam.FormSharing.SEPARATE
 
     def _positive(self, field, message):
         value = self.cleaned_data[field]

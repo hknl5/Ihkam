@@ -16,9 +16,10 @@ from django.views.decorators.http import require_POST
 
 from courses.models import Course
 
-from .forms import ExamForm, row_formset, specs_from_post
+from .forms import ExamForm, _wants_multiple_forms, row_formset, specs_from_post
 from .models import Blueprint, Exam
 from .services.blueprint import Issue, auto_build, eligible_topics, validate, validate_blueprint
+from .services.forms import FormAssemblyError, assemble_forms, save_assembly
 
 
 def _own_course(request, pk) -> Course:
@@ -65,6 +66,25 @@ def exam_list(request, pk):
             "form": form,
             "topic_count": len(eligible_topics(course)),
         },
+    )
+
+
+@login_required
+@require_POST
+def exam_sharing_option(request, pk):
+    """Show or hide the sharing question as the form count is typed (M9, HTMX).
+
+    A one-form exam has nothing to relate to anything, so the question is not
+    asked — an option that cannot apply is clutter on the one screen where every
+    field is a decision. Nothing is saved; this only re-renders one field.
+    """
+    _own_course(request, pk)
+    show = _wants_multiple_forms(request.POST)
+    form = ExamForm(initial={"form_sharing": request.POST.get("form_sharing") or None})
+    return render(
+        request,
+        "exams/partials/sharing_option.html",
+        {"field": form["form_sharing"], "show": show},
     )
 
 
@@ -214,4 +234,52 @@ def blueprint_plan(request, pk, exam_pk):
         request,
         "exams/plan.html",
         {"course": exam.course, "exam": exam, "blueprint": board, "plan": plan, "error": error},
+    )
+
+
+@login_required
+def exam_forms(request, pk, exam_pk):
+    """The assembled forms — a diagnostic screen, not the comparison screen (M9).
+
+    GET assembles from the reviewed pool and shows what would be built, beside
+    what is already saved. POST saves it, and refuses to save a form that is
+    short of questions: the shortfalls are shown per row instead, each naming
+    the topic, the count, and the two ways out.
+
+    Assembly is plain arithmetic, so a GET here is cheap and makes no call. The
+    side-by-side comparison an instructor actually works from is M10's.
+    """
+    exam = _own_exam(request, pk, exam_pk)
+
+    assembly, error = None, ""
+    try:
+        assembly = assemble_forms(exam)
+    except FormAssemblyError as exc:
+        error = str(exc)
+
+    if request.method == "POST" and assembly is not None:
+        if assembly.is_complete:
+            saved = save_assembly(exam, assembly)
+            messages.success(
+                request,
+                f"{len(saved)} form{'s' if len(saved) != 1 else ''} assembled. "
+                + assembly.summary,
+            )
+        else:
+            messages.warning(
+                request,
+                "No form was saved — some rows cannot be filled. " + assembly.summary,
+            )
+        return redirect(reverse("exams:forms", args=[exam.course_id, exam.pk]))
+
+    return render(
+        request,
+        "exams/forms.html",
+        {
+            "course": exam.course,
+            "exam": exam,
+            "assembly": assembly,
+            "error": error,
+            "saved_forms": list(exam.forms.prefetch_related("entries__question")),
+        },
     )

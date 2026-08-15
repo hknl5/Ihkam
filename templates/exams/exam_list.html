@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Exams — {{ course.code }} — إحكام{% endblock %}
 
@@ -79,7 +80,15 @@
   <aside>
     <div class="card" aria-labelledby="define-heading">
       <h2 id="define-heading" class="section-title">Define an exam</h2>
-      <form method="post" novalidate>
+      {# The sharing question is asked only when a second form exists to relate
+         to. The reveal is server-decided (M9): the same function that renders
+         it decides whether it applies, so the screen cannot offer an option the
+         save path would ignore. #}
+      <form method="post" novalidate id="exam-form"
+            hx-post="{% url 'exams:exam_sharing_option' course.pk %}"
+            hx-trigger="change from:#{{ form.number_of_forms.id_for_label }}"
+            hx-target="#sharing-option"
+            hx-swap="outerHTML">
         {% csrf_token %}
         {% if form.non_field_errors %}
           <ul class="errorlist">
@@ -87,7 +96,11 @@
           </ul>
         {% endif %}
         {% for field in form %}
-          {% include "partials/field.html" with field=field %}
+          {% if field.name == "form_sharing" %}
+            {% include "exams/partials/sharing_option.html" with field=field show=form.show_sharing %}
+          {% else %}
+            {% include "partials/field.html" with field=field %}
+          {% endif %}
         {% endfor %}
         <div class="action-bar">
           <button type="submit" class="btn btn--primary">Define exam</button>
@@ -96,4 +109,10 @@
     </div>
   </aside>
 </div>
+{% endblock %}
+
+{% block body_extra %}
+  {# Vendored, as on the blueprint editor: the conditional reveal is behaviour
+     this screen depends on, and it should not be one network hiccup away. #}
+  <script src="{% static 'js/htmx.min.js' %}" defer></script>
 {% endblock %}
