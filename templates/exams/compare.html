@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+
+{% block title %}Compare forms — {{ exam.display_title }} — إحكام{% endblock %}
+
+{% block content %}
+{# M10's screen. Two rules govern everything below:
+   – every label says "expected", because nothing here has been measured on a
+     student; and
+   – there is no figure anywhere for how equivalent the forms are, because there
+     is no basis for one. Indicators are shown as they are, side by side. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:list' course.pk %}">Exams</a>
+  <span aria-hidden="true">/</span>
+  <a href="{% url 'exams:forms' course.pk exam.pk %}">Forms</a>
+  <span aria-hidden="true">/</span>
+  <span>Compare</span>
+</nav>
+
+<div class="page-head">
+  <h1>Compare the forms</h1>
+  <p>
+    Every indicator below is something that can be counted about the questions —
+    marks, chapters, steps in an answer key, words to read, minutes estimated.
+    None of it is a measurement of how students perform, so nothing here says how
+    equivalent the two papers are. Read the columns; the decision is yours.
+  </p>
+</div>
+
+{% if not forms %}
+  <div class="empty-state">
+    <h2>No forms have been saved yet</h2>
+    <p>Assemble the papers first — the comparison reads what was saved, not a draft.</p>
+    <a class="btn btn--primary" href="{% url 'exams:forms' course.pk exam.pk %}">Go to Forms</a>
+  </div>
+{% elif report.profiles|length < 2 %}
+  <div class="banner banner--warn" role="status">
+    <span class="banner__label">One form.</span>
+    <span>{{ report.summary }}</span>
+  </div>
+{% else %}
+
+  <div class="card">
+    <p class="caption">
+      {{ exam.display_title }} ·
+      {% for profile in report.profiles %}Form {{ profile.label }}{% if not forloop.last %} · {% endif %}{% endfor %} ·
+      limit <span class="num">{{ report.timing.limit_minutes }}</span> min
+    </p>
+    <p class="status {% if report.divergent_rows %}status--warn{% else %}status--ok{% endif %}">
+      {{ report.summary }}
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <div class="action-bar">
+        <button type="submit" class="btn btn--primary">
+          {% if semantic_ran %}Run the leakage &amp; similarity checks again{% else %}Check leakage &amp; similarity{% endif %}
+        </button>
+        <span class="caption">
+          Reads every question pair on each paper — one embedding call, then one
+          verdict per shortlisted pair. The verdict is the model's; the vectors
+          only decide what gets read.
+        </span>
+      </div>
+    </form>
+  </div>
+
+  {# --- إحكام notes -------------------------------------------------------- #}
+  <section aria-labelledby="notes-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="notes-heading" class="section-title">إحكام notes</h2>
+    {% if report.notes %}
+      <ul class="stack notes">
+        {% for note in report.notes %}
+          <li class="card card--rail {% if note.tone == 'danger' %}is-rejected{% elif note.tone == 'attention' %}is-attention{% endif %}">
+            <p class="status {% if note.tone == 'danger' %}status--danger{% elif note.tone == 'attention' %}status--warn{% else %}status--info{% endif %}">
+              {{ note.label }}
+            </p>
+            <p dir="auto">{{ note.text }}</p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="caption">
+        Nothing to flag on what has been checked so far.
+        {% if not semantic_ran %}Leakage and similarity have not been checked yet.{% endif %}
+      </p>
+    {% endif %}
+  </section>
+
+  {# --- The side-by-side table --------------------------------------------- #}
+  <section aria-labelledby="table-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="table-heading" class="section-title">Side by side</h2>
+    <p class="caption">
+      A cell is colored only where the two forms differ by more than the tolerance
+      printed beside it. Everything else is shown plainly because it agrees.
+    </p>
+    <div class="table-wrap" tabindex="0" role="region" aria-labelledby="table-heading">
+      <table class="data data--compare">
+        <thead>
+          <tr>
+            <th scope="col">Indicator</th>
+            {% for label in report.labels %}
+              <th scope="col" class="num">Form {{ label }}</th>
+            {% endfor %}
+            <th scope="col">Difference</th>
+            <th scope="col">Tolerance</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% regroup report.rows by group as groups %}
+          {% for group in groups %}
+            <tr class="group-row">
+              <th scope="colgroup" colspan="{{ report.labels|length|add:3 }}">{{ group.grouper }}</th>
+            </tr>
+            {% for row in group.list %}
+              <tr{% if row.divergent %} class="is-divergent"{% endif %}>
+                <th scope="row" dir="auto">
+                  {{ row.label }}
+                  {% if row.note %}<span class="caption" dir="auto">{{ row.note }}</span>{% endif %}
+                </th>
+                {% for label, value in row.values.items %}
+                  <td class="num{% if row.divergent %} cell--divergent{% endif %}">{{ value }}</td>
+                {% endfor %}
+                <td class="num{% if row.divergent %} cell--divergent{% endif %}">
+                  {{ row.difference }}
+                  {% if row.divergent %}
+                    <span class="status status--warn">diverges</span>
+                  {% endif %}
+                </td>
+                <td class="num">{{ row.tolerance }} {{ row.unit }}</td>
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {# --- Expected difficulty, per form -------------------------------------- #}
+  <section aria-labelledby="difficulty-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="difficulty-heading" class="section-title">Expected difficulty</h2>
+    <p class="caption">
+      Four proxies, kept apart on purpose: combining them would need weights
+      nobody can justify and would hide which one moved. None of them is a
+      measurement of how hard students find these questions.
+    </p>
+    <div class="split">
+      {% for profile in report.profiles %}
+        <article class="card" aria-label="Form {{ profile.label }} expected difficulty">
+          <h3 class="section-title">Form {{ profile.label }}</h3>
+          <dl class="tally">
+            <dt>Solution steps past the first</dt>
+            <dd class="num">{{ profile.total_worked_steps }}</dd>
+            <dt>Words to read</dt>
+            <dd class="num">{{ profile.total_words }}</dd>
+            <dt>Questions carrying a formula</dt>
+            <dd class="num">{{ profile.formula_count }}</dd>
+            <dt>Options beyond four</dt>
+            <dd class="num">{{ profile.option_load }}</dd>
+            <dt>Expected time</dt>
+            <dd class="num">{{ profile.expected_minutes }} min</dd>
+          </dl>
+          <p class="caption">
+            Heavy on two proxies or more:
+            {% for question in profile.demanding_questions %}<span class="num">{{ question.ref.code }}</span>{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}.
+          </p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  {# --- Leakage and similarity --------------------------------------------- #}
+  <section aria-labelledby="semantic-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="semantic-heading" class="section-title">Leakage and similarity</h2>
+    {% if report.semantic_error %}
+      <div class="banner banner--danger" role="status">
+        <span class="banner__label">Not checked.</span>
+        <span>{{ report.semantic_error }}</span>
+      </div>
+    {% elif not semantic_ran %}
+      <p class="caption">
+        Not checked yet — press <em>Check leakage &amp; similarity</em> above. Until
+        then these pairs are unchecked, which is not the same as clear.
+      </p>
+    {% else %}
+      <p class="caption">
+        <span class="num">{{ report.shortlisted_pairs }}</span> pair{{ report.shortlisted_pairs|pluralize }}
+        on the papers were close enough, shared an answer, or shared enough terms to be
+        worth reading, and <span class="num">{{ report.judged_pairs }}</span> of them
+        {{ report.judged_pairs|pluralize:"was,were" }} judged on whether one question
+        actually reveals the other's answer. Any pair not read is listed in the notes
+        as unchecked, which is not the same as clear.
+      </p>
+
+      <h3 class="section-title">Answer leakage</h3>
+      {% if report.leaks %}
+        <ul class="stack">
+          {% for leak in report.leaks %}
+            <li class="card card--rail is-rejected">
+              <p><strong class="num">{{ leak.message }}</strong></p>
+              <p dir="auto">{{ leak.reason }}</p>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="caption">No pair was confirmed to reveal another's answer.</p>
+      {% endif %}
+
+      <h3 class="section-title" style="margin-block-start: var(--space-6);">Near-duplicate questions</h3>
+      {% if report.similar_pairs %}
+        <ul class="stack">
+          {% for pair in report.similar_pairs %}
+            <li class="card card--rail is-attention">
+              <p dir="auto">{{ pair.message }}</p>
+              <p class="caption">
+                Cosine similarity <span class="num">{{ pair.similarity }}</span> — a
+                resemblance in wording, not a leak.
+              </p>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="caption">No two questions ask nearly the same thing.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  {# --- The two papers ------------------------------------------------------ #}
+  <section aria-labelledby="papers-heading" style="margin-block-start: var(--space-8);">
+    <h2 id="papers-heading" class="section-title">The two papers</h2>
+    <div class="split">
+      {% for profile in report.profiles %}
+        <div aria-label="Form {{ profile.label }} questions">
+          <h3 class="section-title">
+            Form {{ profile.label }} —
+            <span class="num">{{ profile.question_count }}</span> questions,
+            <span class="num">{{ profile.total_marks }}</span> marks
+          </h3>
+          <ol class="stack">
+            {% for question in profile.questions %}
+              <li class="card card--rail {% if question.needs_mark_review %}is-attention{% endif %}">
+                <p class="caption">
+                  <span class="num">{{ question.ref.code }}</span> ·
+                  <span dir="auto">{{ question.topic_name }}</span> ·
+                  <span class="num">{{ question.marks }}</span> marks ·
+                  about <span class="num">{{ question.minutes }}</span> min
+                  {% if question.ref.question_id in report.shared_question_ids %}
+                    · <span class="status status--info">on both forms</span>
+                  {% endif %}
+                </p>
+                <p dir="auto">{{ question.stem }}</p>
+              </li>
+            {% endfor %}
+          </ol>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+{% endblock %}

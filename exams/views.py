@@ -19,6 +19,7 @@ from courses.models import Course
 from .forms import ExamForm, _wants_multiple_forms, row_formset, specs_from_post
 from .models import Blueprint, Exam
 from .services.blueprint import Issue, auto_build, eligible_topics, validate, validate_blueprint
+from .services.convergence import report_for_exam
 from .services.forms import FormAssemblyError, assemble_forms, save_assembly
 
 
@@ -281,5 +282,58 @@ def exam_forms(request, pk, exam_pk):
             "assembly": assembly,
             "error": error,
             "saved_forms": list(exam.forms.prefetch_related("entries__question")),
+        },
+    )
+
+
+@login_required
+def exam_compare(request, pk, exam_pk):
+    """The comparison screen: how close the two saved papers are (M10).
+
+    GET compares on what can be counted — coverage, marks, per-chapter share,
+    level and type spread, the four expected-difficulty proxies, expected time.
+    That half is arithmetic over questions already in the database, so it is
+    free and runs on every visit.
+
+    POST runs the semantic half: one embedding call for the paper, then one
+    leakage verdict per shortlisted pair. It is a separate press because it is
+    the only thing on this screen that costs anything, and because an instructor
+    should be able to read the indicators without paying for a judgement they
+    did not ask for.
+
+    Nothing here computes an equivalence figure, and there is nowhere to put
+    one — see `services/convergence.py`. The screen shows the indicators and the
+    instructor decides.
+    """
+    exam = _own_exam(request, pk, exam_pk)
+    forms = list(exam.forms.all())
+
+    check_semantics = request.method == "POST"
+    report = report_for_exam(exam, check_semantics=check_semantics) if forms else None
+
+    if report is not None and check_semantics:
+        if report.semantic_error:
+            messages.warning(
+                request,
+                "The leakage and similarity checks did not complete, so those pairs are "
+                "unchecked rather than clear. " + report.semantic_error,
+            )
+        else:
+            messages.success(
+                request,
+                f"{report.shortlisted_pairs} pair"
+                f"{'s' if report.shortlisted_pairs != 1 else ''} read for leakage, "
+                f"{len(report.leaks)} confirmed.",
+            )
+
+    return render(
+        request,
+        "exams/compare.html",
+        {
+            "course": exam.course,
+            "exam": exam,
+            "report": report,
+            "forms": forms,
+            "semantic_ran": bool(report and report.semantic_ran),
         },
     )

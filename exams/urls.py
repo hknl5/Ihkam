@@ -29,4 +29,12 @@ urlpatterns = [
         name="exam_sharing_option",
     ),
     path("courses/<int:pk>/exams/<int:exam_pk>/forms/", views.exam_forms, name="forms"),
+    # M10 — the comparison screen. GET is free arithmetic over the saved forms;
+    # the POST is the semantic half (embeddings + one leakage verdict per
+    # shortlisted pair), asked for deliberately because it costs calls.
+    path(
+        "courses/<int:pk>/exams/<int:exam_pk>/forms/compare/",
+        views.exam_compare,
+        name="compare",
+    ),
 ]

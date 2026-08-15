@@ -387,6 +387,15 @@ Build:
 **Manual test:** compare two forms, verify the notes point to genuine issues you can confirm by eye.
 **Success check:** leakage and high-similarity pairs are detected on a seeded test; no percentage-equivalence claim appears anywhere in the UI.
 
+> **M10 technical decisions:**
+> - **The naming rule is code, not a habit.** `dishonest_claims()` lists the claims this milestone may not make ("actual difficulty", any percentage attached to equivalence or similarity, any equivalence *score*), and the suite runs it over the serialised report **and** over the rendered HTML. A hard rule that lives only in a docstring is a hope.
+> - **Expected difficulty is four proxies, never one index** — worked steps, words to read, formula presence, options beyond four. Combining them needs weights nobody can justify and hides *which* proxy moved, which is the only part an instructor can act on.
+> - **Leakage is checked within a paper, not across the two.** A student sits one form; only what is printed on that form can help them. Cross-form resemblance is a *similarity* finding and is reported as its own indicator.
+> - **The lenient net has three channels, unioned:** cosine ≥ 0.30, an *answer echo* (the other question states this one's answer — numbers and short answers matched whole), and shared rare vocabulary (≥5 terms and ≥20% of the combined vocabulary). The echo channel is the point: a question that states a constant in passing and a later one that asks for it embed far apart and leak completely.
+> - **The budget is split between channels, not ranked across them.** A real 18-question paper has 153 pairs on it, so one report reads at most 16 — half the strongest echo pairs, half the closest pairs, unused share passed to the other. Ranking echo-first buried the closest pairs; ranking by similarity alone would never read the far-apart echo pair. There is no honest exchange rate between the two signals, so none is invented.
+> - **Unread is not clean.** Pairs past the cap, and pairs whose verdict could not be parsed, are reported as *unchecked* — one collapsed note, not one per pair.
+> - **A note that fires on everything points at nothing.** Per-question notes are collapsed once they stop discriminating: on a scanned course every question is OCR-sourced, so that becomes one note naming the count rather than twenty-seven identical sentences burying the leaks above them.
+
 ---
 
 #### M11 · Instructor review UI + export

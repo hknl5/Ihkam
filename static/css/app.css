@@ -663,3 +663,67 @@ table.data td.num { font-family: var(--font-mono); }
   color: var(--warn-600);
   font-size: var(--fs-caption);
 }
+
+/* ---------- Comparison table (M10) ----------
+   §5's rule, in CSS: color signals divergence, never decoration. A cell is
+   tinted only when the two forms disagree by more than the tolerance printed
+   beside it, and the tint is always paired with the word "diverges" so the
+   signal survives a color-blind reader and a black-and-white printout. */
+
+.data--compare th[scope="row"] {
+  white-space: normal;
+  max-width: 22rem;
+  font-weight: 500;
+  position: sticky;
+  inset-inline-start: 0;
+  background: var(--surface-card);
+  z-index: 1;
+}
+.data--compare th[scope="row"] .caption {
+  display: block;
+  font-weight: 400;
+  color: var(--ink-400);
+  white-space: normal;
+}
+.data--compare thead th { z-index: 2; }
+.data--compare thead th:first-child {
+  inset-inline-start: 0;
+  position: sticky;
+  z-index: 3;
+}
+
+/* A section heading inside the table body: what this block of rows is about. */
+.data--compare .group-row th {
+  background: var(--surface-sunken);
+  color: var(--ink-600);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-weight: 600;
+  position: sticky;
+  inset-inline-start: 0;
+}
+
+.data--compare .cell--divergent {
+  background: color-mix(in srgb, var(--warn-600) 10%, transparent);
+  color: var(--warn-600);
+  font-weight: 500;
+}
+.data--compare tr.is-divergent th[scope="row"] {
+  box-shadow: inset 3px 0 0 var(--warn-600);
+}
+.data--compare .status { white-space: nowrap; margin-inline-start: var(--space-2); }
+
+/* The scroll region is focusable so a keyboard can reach a wide table. */
+.table-wrap:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+}
+
+.notes { list-style: none; padding: 0; }
+.notes .status { margin-block-end: var(--space-1); }
+.notes p { max-width: var(--measure); }
+
+@media (max-width: 40rem) {
+  .data--compare th[scope="row"] { max-width: 12rem; }
+}

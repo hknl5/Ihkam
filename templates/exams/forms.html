@@ -50,6 +50,12 @@
         </button>
       </div>
     </form>
+    {% if saved_forms %}
+      <p class="caption">
+        <a href="{% url 'exams:compare' course.pk exam.pk %}">Compare the saved forms</a> —
+        coverage, expected difficulty, expected time, leakage and near-duplicates.
+      </p>
+    {% endif %}
   </div>
 
   {% if assembly.shortfalls %}
