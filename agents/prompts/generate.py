@@ -16,7 +16,7 @@ candidate has to name the passage it came from.
 
 from __future__ import annotations
 
-VERSION = "generate/v2"  # M6: the answer key comes back with the question
+VERSION = "generate/v3"  # M8: a replacement is briefed with the review's notes
 
 #: Stated in both halves of the call, and asserted by the test suite. If this
 #: sentence ever stops reaching the model, generation silently becomes general
@@ -107,6 +107,46 @@ LEVEL_RULES = {
     ),
 }
 
+#: The heading M8 puts the reviewer's notes under. Asserted by the suite: if the
+#: notes stop reaching the model, the correction loop degenerates into rolling
+#: the same dice again, which is the one thing it exists not to be.
+REGENERATION_HEADER = (
+    "These attempts at this exact question were reviewed and rejected. Write "
+    "different questions that do not repeat these faults:"
+)
+
+#: Said after the notes, because a model handed a list of faults tends to answer
+#: with the same question mended. A replacement is a different question.
+REGENERATION_RULE = (
+    "Do not rewrite the rejected questions and do not ask about the same thing "
+    "again — write new questions, about something else the passages say, that "
+    "satisfy every requirement listed above."
+)
+
+
+def format_rejections(notes, rejected_stems=()) -> str:
+    """The reviewer's notes, as the brief for a replacement (M8).
+
+    The rejected stems are printed with them so the model can see *what* was
+    asked as well as what was wrong with it — a note saying "the level is too
+    low" is much easier to act on beside the definition question that earned it.
+    """
+    notes = [note.strip() for note in notes if note and note.strip()]
+    stems = [stem.strip() for stem in rejected_stems if stem and stem.strip()]
+    if not notes and not stems:
+        return ""
+
+    block = [REGENERATION_HEADER, ""]
+    for stem in stems:
+        block.append(f'  Rejected: "{stem}"')
+    if stems:
+        block.append("")
+    for note in notes:
+        block.append(f"  - {note}")
+    block.extend(["", REGENERATION_RULE])
+    return "\n".join(block)
+
+
 SYSTEM = f"""\
 You write exam questions for one university course, from that course's own \
 teaching material.
@@ -187,13 +227,23 @@ def build_user_prompt(
     passages,
     language: str = "en",
     expected_minutes: float | None = None,
+    notes=(),
+    rejected_stems=(),
 ) -> str:
-    """The user half of the call: what to write, then what to write it from."""
+    """The user half of the call: what to write, then what to write it from.
+
+    `notes` and `rejected_stems` are M8's: on a gap-fill round the reviewer's
+    rejection notes are handed back here, so the replacement is steered rather
+    than re-rolled. They are placed immediately before the grounding rule and
+    the passages — last thing read, in the same breath as the material.
+    """
     timing = (
         f"A student should need about {expected_minutes:.0f} minute(s) on it.\n"
         if expected_minutes
         else ""
     )
+    rejections = format_rejections(notes, rejected_stems)
+    rejections = f"{rejections}\n\n" if rejections else ""
     return (
         f"Course: {course_name}\n"
         f"Topic: {topic_name}\n"
@@ -208,6 +258,7 @@ def build_user_prompt(
         f"{KEY_RULES.get(question_type, '')}\n\n"
         f"Write exactly {count} question(s), all of this type and level, each "
         "about a different thing the passages say.\n\n"
+        f"{rejections}"
         f"{GROUNDING_RULE}\n\n"
         "Passages:\n\n"
         f"{format_passages(passages)}"

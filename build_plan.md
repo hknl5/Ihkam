@@ -340,6 +340,15 @@ Build:
 **Manual test:** run a full blueprint end-to-end; watch the log show rejects returning to 2A and eventually passing.
 **Success check:** every rejected question re-enters 2A with its note and nothing advances to form-building until it passes review or hits the manual-attention cap.
 
+> **M8 technical decisions:**
+> - **The loop fills a gap; it does not chase a candidate.** Regenerating each rejected question individually is the obvious design and the wrong one: a row of 5 that got 6 candidates and passed 5 is *finished*, and the sixth rejection is not a problem. The condition is `passing < N`, counted per row, and a gap-fill round asks only for the shortfall — over-generated the same way a first batch is, so a row short by one still gets two tries. Surplus passes are kept as the alternatives an instructor rejects the first choice in favour of.
+> - **The notes reach the model, and all of them do.** `format_rejections` puts Agent 3A's own sentences — reason *and* requirement — plus the rejected stems into the next 2A prompt, immediately before the grounding rule. Every round's notes are carried, not just the last one's: a one-round memory produces a replacement that fixes the level and reintroduces the scope fault.
+> - **Three gap-fill rounds, then a human.** A row the model cannot satisfy is usually a row whose material does not support the question the blueprint asks for; no number of retries fixes that. The item stops, is marked **needs manual attention**, and keeps whatever partial pool it earned.
+> - **An outage is not a rejection.** `GenerationCallFailed` / `ReviewCallFailed` were split out of their parent errors so the loop can tell "the call never reached the model" from "the answer was unreadable" without matching on a message. A round only counts once it finished, so an outage costs the item no retry, and a whole-plan run stops rather than reporting the same outage against every remaining row.
+> - **Every attempt is written down, including the ones that never became questions.** `ItemRun` + `QuestionAttempt` store passed, rejected and dropped-before-review alike, with the notes verbatim. M5 drops an ungrounded candidate silently by design; here that drop is what explains a short row, so `attempts == approved + rejected + dropped` is a property the suite holds.
+> - **Passing review is not approval.** Stored questions keep status `candidate`, exactly as M5 stores them — review passing is إحكام's opinion and approval is the instructor's act. What M8 guarantees is only that nothing unreviewed can reach M9: the pool is read through the attempts that passed, not through `Question`.
+> - **Re-running an item updates its log rather than adding a second one**, and a passing candidate whose stem is already stored reuses that row. Re-running costs model calls, not a duplicated pool.
+
 > ✅ **End of Stage 3: all three agents work together in a closed loop.** This is the functional core of إحكام.
 
 ---

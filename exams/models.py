@@ -244,3 +244,132 @@ class Question(models.Model):
     def needs_mark_review(self) -> bool:
         """A numeric key whose steps do not total the question's marks."""
         return self.mark_sum_ok is False
+
+
+class ItemRun(models.Model):
+    """What the correction loop did about one blueprint row (M8).
+
+    One row of this per (exam, blueprint row): how many generation rounds it
+    took, how many questions came out the other side of review, and whether it
+    finished or hit the retry cap and needs an instructor. Re-running an item
+    updates this row rather than adding a second one — two records would be two
+    answers to "did this row work?".
+    """
+
+    class Status(models.TextChoices):
+        PASSED = "passed", "Passed review"
+        NEEDS_ATTENTION = "needs_attention", "Needs manual attention"
+
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name="item_runs")
+    #: Nullable for the same reason `Question.blueprint_row` is: the log of what
+    #: happened outlives a re-plan.
+    blueprint_row = models.ForeignKey(
+        BlueprintRow, on_delete=models.SET_NULL, null=True, blank=True, related_name="item_runs"
+    )
+    #: Copied rather than followed, so the log still reads as a sentence after
+    #: the row it describes is gone.
+    topic_name = models.CharField(max_length=200, blank=True)
+    question_type = models.CharField(max_length=16, blank=True)
+    level = models.CharField(max_length=12, blank=True)
+    #: What the row asked for, and what review actually passed. Surplus is
+    #: normal and kept: `approved_count` may exceed `required`.
+    required = models.PositiveIntegerField(default=0)
+    approved_count = models.PositiveIntegerField(default=0)
+    #: Generation rounds spent: the first batch, plus each gap-fill round.
+    rounds = models.PositiveIntegerField(default=0)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.NEEDS_ATTENTION
+    )
+    #: Set when the loop stopped for a reason that is not "the questions were
+    #: bad" — a provider outage, a row with no passages. Distinct from the
+    #: rejection notes, which are about questions.
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["exam", "blueprint_row"], name="one_item_run_per_blueprint_row"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.topic_name or 'item'} — {self.get_status_display()}"
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.status == self.Status.NEEDS_ATTENTION
+
+    @property
+    def gap_fill_rounds(self) -> int:
+        """Rounds spent asking for replacements — the first batch is not one."""
+        return max(self.rounds - 1, 0)
+
+    @property
+    def shortfall(self) -> int:
+        return max(self.required - self.approved_count, 0)
+
+    @property
+    def approved_questions(self):
+        """The questions of this item that actually passed review.
+
+        The only way into M9's pool. Reading it through the attempts rather than
+        through `Question` is deliberate: a question is in the pool because a
+        recorded review passed it, not because it exists.
+        """
+        return Question.objects.filter(
+            attempts__item_run=self, attempts__outcome=QuestionAttempt.Outcome.PASSED
+        ).distinct()
+
+
+class QuestionAttempt(models.Model):
+    """One candidate the loop produced, and what became of it (M8).
+
+    Every attempt is recorded, not only the survivors: a rejected question and
+    the note that rejected it are the audit trail the success metric ("problems
+    caught before approval") is counted from, and a candidate dropped for citing
+    no supplied passage is why a row came back short. Without these three
+    outcomes side by side, a short row is an unexplained gap.
+
+    Nothing here is ever rewritten — an attempt is a fact about a past round.
+    """
+
+    class Outcome(models.TextChoices):
+        PASSED = "passed", "Passed review"
+        REJECTED = "rejected", "Rejected by review"
+        #: Never reviewed, because it never became a candidate: its `source_ref`
+        #: named no supplied passage, or it came back as the wrong type. M5's
+        #: silent drop, made visible.
+        DROPPED = "dropped", "Dropped before review"
+
+    item_run = models.ForeignKey(ItemRun, on_delete=models.CASCADE, related_name="attempts")
+    #: 1 for the first batch, 2–4 for the gap-fill rounds.
+    round = models.PositiveIntegerField(default=1)
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    stem = models.TextField()
+    #: Set only for an attempt that passed and was stored. A rejected or dropped
+    #: attempt has no `Question` row by design — storing one would put an
+    #: unreviewed question where M9 can reach it.
+    question = models.ForeignKey(
+        Question, on_delete=models.SET_NULL, null=True, blank=True, related_name="attempts"
+    )
+    #: Agent 3A's rejection notes, verbatim — the same sentences that were
+    #: handed back to Agent 2A as the brief for the replacement.
+    notes = models.JSONField(default=list, blank=True)
+    failed_checks = models.JSONField(default=list, blank=True)
+    #: False when only the deterministic half of review ran. "Passed every
+    #: check" and "passed every check we ran" are not the same claim.
+    model_checked = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["round", "pk"]
+
+    def __str__(self) -> str:
+        return f"round {self.round} · {self.get_outcome_display()} · {self.stem[:60]}"
+
+    @property
+    def note(self) -> str:
+        return "\n".join(self.notes or [])

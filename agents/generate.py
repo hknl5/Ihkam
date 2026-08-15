@@ -65,6 +65,17 @@ class UnsupportedQuestionType(QuestionGenerationError):
     """The blueprint asks for a type the MVP does not write (see `MVP_TYPES`)."""
 
 
+class GenerationCallFailed(QuestionGenerationError):
+    """The call never reached the model — no key, no credit, rate limit, network.
+
+    Separated from its parent so M8 can tell the two failures apart without
+    reading the message: a malformed answer is a round the loop spent, and this
+    is a round it never got to spend. Retrying it against the same wall would
+    burn the item's retry budget on an outage that has nothing to do with the
+    question. The M2 rule, made checkable.
+    """
+
+
 # --- What the MVP writes -----------------------------------------------------
 
 #: MCQ, true/false, short answer, and text-only numeric problems. Diagrams,
@@ -417,8 +428,15 @@ def _loads(text: str) -> dict:
     return json.loads(_JSON_FENCE.sub("", text or "").strip())
 
 
-def build_prompt(item: GenerationItem) -> tuple[str, str]:
-    """The system and user halves of the generation call, composed."""
+def build_prompt(
+    item: GenerationItem, *, wanted: int | None = None, notes=(), rejected_stems=()
+) -> tuple[str, str]:
+    """The system and user halves of the generation call, composed.
+
+    `wanted` overrides the over-generated count, and `notes` carries the
+    reviewer's rejections: both are M8's gap-fill round, which asks for as many
+    replacements as the row is short and says what was wrong with the last ones.
+    """
     from agents.prompts.generate import SYSTEM, build_user_prompt
 
     user = build_user_prompt(
@@ -429,18 +447,33 @@ def build_prompt(item: GenerationItem) -> tuple[str, str]:
         level=item.level,
         level_label=item.level_label,
         marks=item.marks,
-        count=item.candidates_wanted,
+        count=item.candidates_wanted if wanted is None else wanted,
         passages=item.passages,
         language=item.language,
         expected_minutes=item.expected_minutes,
+        notes=notes,
+        rejected_stems=rejected_stems,
     )
     return SYSTEM, user
 
 
-def generate_candidates(item: GenerationItem, *, provider=None) -> GenerationRun:
+def generate_candidates(
+    item: GenerationItem,
+    *,
+    provider=None,
+    wanted: int | None = None,
+    notes=(),
+    rejected_stems=(),
+) -> GenerationRun:
     """Write `ceil(N * 1.5)` candidates for one blueprint item.
 
+    `wanted` and `notes` are M8's: a gap-fill round asks for a specific number
+    of *alternatives*, briefed with the notes Agent 3A wrote when it rejected
+    the last batch. Everything else — grounding, validation, the one retry — is
+    identical, because a replacement is held to exactly the same bar.
+
     Raises `UnsupportedQuestionType` for a type the MVP does not write,
+    `GenerationCallFailed` if the call never reached the model, and
     `QuestionGenerationError` if the item has no passages to be grounded in or
     the model's answer cannot be validated twice. Nothing partial is returned:
     on failure the caller has an error, not a half-batch.
@@ -459,15 +492,18 @@ def generate_candidates(item: GenerationItem, *, provider=None) -> GenerationRun
             "nothing to write a question from. A question written without them "
             "would be general knowledge wearing a citation."
         )
-    if item.candidates_wanted <= 0:
+    count = item.candidates_wanted if wanted is None else wanted
+    if count <= 0:
         return GenerationRun(item=item)
 
     try:
         provider = provider or get_provider()
     except LLMError as exc:
-        raise QuestionGenerationError(str(exc)) from exc
+        raise GenerationCallFailed(str(exc)) from exc
 
-    system, user = build_prompt(item)
+    system, user = build_prompt(
+        item, wanted=count, notes=notes, rejected_stems=rejected_stems
+    )
     last_error = ""
     for attempt in (1, 2):
         try:
@@ -481,7 +517,7 @@ def generate_candidates(item: GenerationItem, *, provider=None) -> GenerationRun
             # Not a malformed answer: the call never reached the model. Reporting
             # it as bad JSON sends the instructor to the wrong place, and a
             # second attempt would fail identically. The M2 rule.
-            raise QuestionGenerationError(
+            raise GenerationCallFailed(
                 f"The generation call did not complete: {exc}"
             ) from exc
 
@@ -599,6 +635,7 @@ __all__ = [
     "Candidate",
     "CandidateOut",
     "GenerationItem",
+    "GenerationCallFailed",
     "GenerationOut",
     "GenerationRun",
     "QuestionGenerationError",

@@ -58,6 +58,16 @@ class QuestionReviewError(RuntimeError):
     """The review could not be completed. No verdict is better than a guessed one."""
 
 
+class ReviewCallFailed(QuestionReviewError):
+    """The review call never reached the model — rate limit, no credit, network.
+
+    The counterpart of `GenerationCallFailed`, and separated for the same
+    reason: M8 must not spend one of an item's three retry rounds on an outage.
+    A question that was not reviewed because the provider was down is not a
+    rejected question; it is an unreviewed one.
+    """
+
+
 # --- The checks --------------------------------------------------------------
 
 #: The five checks the plan names. A finding always names one of these, so the
@@ -628,7 +638,7 @@ def model_findings(subject: ReviewSubject, *, provider=None) -> list[Finding]:
     try:
         provider = provider or get_provider()
     except LLMError as exc:
-        raise QuestionReviewError(str(exc)) from exc
+        raise ReviewCallFailed(str(exc)) from exc
 
     system, user = build_prompt(subject)
     last_error = ""
@@ -641,7 +651,7 @@ def model_findings(subject: ReviewSubject, *, provider=None) -> list[Finding]:
             last_error = f"the answer was not the expected JSON ({exc.__class__.__name__})"
             logger.warning("Review attempt %s returned bad JSON: %s", attempt, exc)
         except Exception as exc:  # noqa: BLE001 — surfaced as itself
-            raise QuestionReviewError(f"The review call did not complete: {exc}") from exc
+            raise ReviewCallFailed(f"The review call did not complete: {exc}") from exc
 
     raise QuestionReviewError(
         f"The reviewer's answer could not be read after two attempts: {last_error}. "
@@ -725,6 +735,7 @@ __all__ = [
     "OPTION_QUALITY",
     "Finding",
     "QuestionReviewError",
+    "ReviewCallFailed",
     "ReviewOut",
     "ReviewResult",
     "ReviewSubject",
