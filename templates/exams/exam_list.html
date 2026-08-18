@@ -28,6 +28,14 @@
   <section aria-labelledby="exams-heading">
     <h2 id="exams-heading" class="section-title">Defined exams</h2>
 
+    {# M12: the bank is course-wide, so it belongs beside the list of exams
+       rather than inside one of them. #}
+    <div class="action-bar">
+      <a class="btn btn--secondary" href="{% url 'bank:browse' course.pk %}">
+        Question bank<span class="visually-hidden"> for {{ course.code }}</span>
+      </a>
+    </div>
+
     {% if not exams %}
       <div class="empty-state">
         <h2>No exams yet</h2>

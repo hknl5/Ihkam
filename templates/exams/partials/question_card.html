@@ -19,6 +19,11 @@
         Your edit · locked
       </span>
     {% endif %}
+    {% if question.is_from_bank %}
+      <span class="lock" title="Reused from this course's bank — the loop leaves it alone">
+        From the bank · reused
+      </span>
+    {% endif %}
   </header>
 
   <p class="lead" id="q{{ question.pk }}-stem" dir="auto">{{ question.stem }}</p>
@@ -112,6 +117,13 @@
       <button type="submit" name="action" value="easier" class="btn btn--ghost">Make easier</button>
       <button type="submit" name="action" value="harder" class="btn btn--ghost">Make harder</button>
       <button type="submit" name="action" value="clarify" class="btn btn--ghost">Clarify wording</button>
+      {# M12: the act that makes an approval outlive this exam. Offered only on
+         an approved question, because the bank is a record of decisions. #}
+      {% if question.is_approved %}
+        <button type="submit" name="action" value="save_to_bank" class="btn btn--secondary">
+          Save to bank
+        </button>
+      {% endif %}
       <button type="submit" name="action" value="delete" class="btn btn--danger">Delete</button>
     </form>
 

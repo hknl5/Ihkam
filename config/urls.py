@@ -8,6 +8,7 @@ urlpatterns = [
     path("", include("courses.urls")),
     path("", include("exams.urls")),
     path("", include("accounts.urls")),
+    path("", include("bank.urls")),
 ]
 
 if settings.DEBUG:

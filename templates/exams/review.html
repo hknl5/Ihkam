@@ -21,7 +21,8 @@
   <p>
     إحكام wrote these and checked them. Which of them becomes an exam is your
     decision. Anything you edit here is yours from that moment — no generation
-    cycle will write over it.
+    cycle will write over it. A question you approve can be saved to this
+    course's bank and reused in a later exam.
   </p>
 </div>
 
@@ -48,6 +49,8 @@
     <a class="btn btn--secondary" href="{% url 'exams:compare' course.pk exam.pk %}">Compare</a>
     <a class="btn btn--secondary" href="{% url 'exams:export' course.pk exam.pk %}">Export</a>
     <a class="btn btn--ghost" href="{% url 'exams:generate' course.pk exam.pk %}">Generate more</a>
+    {# M12: the bank, from the screen where questions are put into it. #}
+    <a class="btn btn--secondary" href="{% url 'bank:browse' course.pk %}?exam={{ exam.pk }}">Question bank</a>
   </div>
 </div>
 

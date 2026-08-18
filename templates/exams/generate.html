@@ -62,11 +62,75 @@
   <div class="action-bar">
     <a class="btn btn--secondary" href="{% url 'exams:blueprint' course.pk exam.pk %}">Back to blueprint</a>
     <a class="btn btn--secondary" href="{% url 'exams:plan' course.pk exam.pk %}">See the passages first</a>
+    <a class="btn btn--secondary" href="{% url 'bank:browse' course.pk %}?exam={{ exam.pk }}">Browse the bank</a>
     {% if existing %}
       <a class="btn btn--secondary" href="{% url 'exams:review' course.pk exam.pk %}">Go to Review</a>
     {% endif %}
   </div>
 </div>
+
+{# --- M12: where the questions come from -----------------------------------
+   Free to show: the split and any shortfall are database arithmetic over the
+   bank, so the instructor sees what pressing Generate will actually do — and
+   can still change the ratio — before a single call is spent. #}
+<section class="card" aria-labelledby="sourcing-heading" style="margin-block-start: var(--space-8);">
+  <h2 id="sourcing-heading" class="section-title">Where the questions come from</h2>
+
+  <form method="post" action="{% url 'exams:generate' course.pk exam.pk %}">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="sourcing">
+    {% for field in sourcing_form %}
+      {% include "partials/field.html" with field=field %}
+    {% endfor %}
+    <div class="action-bar">
+      <button type="submit" class="btn btn--secondary">Save sourcing</button>
+    </div>
+  </form>
+
+  {% if sourcing_plan %}
+    <p class="status {% if sourcing_plan.is_short %}status--warn{% else %}status--info{% endif %}">
+      {{ sourcing_plan.summary }}
+    </p>
+    {% if sourcing_plan.shortfalls %}
+      <div class="banner banner--warn" role="status">
+        <span class="banner__label">The bank cannot cover that share.</span>
+        <ul class="topic-detail__list">
+          {% for line in sourcing_plan.shortfalls %}<li dir="auto">{{ line }}</li>{% endfor %}
+        </ul>
+        <span>
+          Nothing is left out — إحكام writes whatever the bank cannot supply. Lower
+          the share if you would rather it did not.
+        </span>
+      </div>
+    {% endif %}
+    {% if sourcing_plan.draws_on_bank %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Topic</th>
+              <th scope="col">Needs</th>
+              <th scope="col">From the bank</th>
+              <th scope="col">In the bank</th>
+              <th scope="col">To be written</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in sourcing_plan.rows %}
+              <tr>
+                <td dir="auto">{{ source.topic_name }}</td>
+                <td class="num">{{ source.required }}</td>
+                <td class="num">{{ source.from_bank }}</td>
+                <td class="num">{{ source.available }}</td>
+                <td class="num">{{ source.to_generate }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endif %}
+</section>
 
 {% if blueprint %}
   <section aria-labelledby="rows-heading" style="margin-block-start: var(--space-8);">

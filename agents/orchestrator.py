@@ -46,6 +46,13 @@ loop does not regenerate over them, does not ask, and does not say anything —
 the instructor did not request this run, so it has nothing to tell them. A
 regeneration they *do* request goes through `exams/services/revision.py`, which
 warns first and then obeys.
+
+**M12 adds a seventh: the loop is told what is left to write.** An exam can be
+sourced partly from the course's question bank, and those slots are filled
+before this module runs. `run_plan(demand=...)` therefore asks each row only for
+the questions that do not exist yet — down to none — and a reused question is
+carried through exactly as an edited one is, for the same reason: it carries an
+approval the instructor already gave.
 """
 
 from __future__ import annotations
@@ -96,6 +103,11 @@ NEEDS_ATTENTION = ItemRun.Status.NEEDS_ATTENTION
 #: the log because it is in the pool, and it is in the pool because an
 #: instructor edited it and إحكام does not overwrite that.
 CARRIED_NOTE = "Carried unchanged: this question was edited by the instructor."
+
+#: The same, for a question that came out of the course's bank (M12). It is in
+#: the pool because the instructor approved it on an earlier exam, and this run
+#: neither wrote it nor is entitled to write over it.
+BANK_NOTE = "Carried unchanged: this question was reused from the course's bank."
 
 
 # --- What one attempt was ----------------------------------------------------
@@ -315,6 +327,19 @@ def run_item(
     """
     result = ItemResult(item=item)
 
+    if item.count <= 0:
+        # Nothing left to write: this row was filled from the bank (M12). The
+        # item is still recorded, and `persist_item` carries the reused
+        # questions into it — a row with no `ItemRun` would be a row M9 cannot
+        # see a pool for, which is a paper missing a section.
+        result.status = PASSED
+        logger.info(
+            "Nothing to generate for '%s' — the bank filled the row.", item.topic_name
+        )
+        if persist:
+            persist_item(result, exam=exam, row=row)
+        return result
+
     try:
         _run_round(result, 1, provider=provider, python_only=python_only)
         while result.shortfall and result.rounds <= max_rounds:
@@ -492,7 +517,7 @@ def persist_item(result: ItemResult, *, exam=None, row=None) -> ItemRun:
                         outcome=QuestionAttempt.Outcome.PASSED,
                         stem=question.stem,
                         question=question,
-                        notes=[CARRIED_NOTE],
+                        notes=[BANK_NOTE if question.is_from_bank else CARRIED_NOTE],
                         failed_checks=[],
                         model_checked=False,
                     )
@@ -518,7 +543,7 @@ def _row(row_id):
 
 
 def locked_questions(*, exam, row):
-    """Questions on this row that an instructor has edited (M11's hard rule).
+    """Questions on this row the loop must leave alone (M11's hard rule, M12's).
 
     The automatic loop must leave these exactly as they are. It never rewrote a
     stored question in the first place, but that alone was not enough: this
@@ -530,11 +555,20 @@ def locked_questions(*, exam, row):
 
     So they are carried: kept in the log, kept in the pool, and never touched.
     Silently, because the instructor did not ask for this run.
+
+    M12 puts a second kind of question under the same protection: one pulled out
+    of the course's bank. It carries an approval the instructor gave on an
+    earlier exam, so regenerating over it would discard a decision for exactly
+    the reason M11 forbids — the loop did not ask, and the instructor did not
+    offer.
     """
+    from django.db.models import Q
+
     if row is None or exam is None:
         return []
     return list(
-        Question.objects.filter(exam=exam, blueprint_row=row, instructor_edited=True)
+        Question.objects.filter(exam=exam, blueprint_row=row)
+        .filter(Q(instructor_edited=True) | Q(bank_source__isnull=False))
         .exclude(status=Question.Status.REJECTED)
         .order_by("position", "pk")
     )
@@ -590,18 +624,31 @@ def _store_approved(result: ItemResult, *, exam, row) -> None:
 # --- A whole blueprint -------------------------------------------------------
 
 
-def items_for_plan(plan: ExamPlan) -> list[tuple[object, GenerationItem]]:
+def items_for_plan(
+    plan: ExamPlan, *, demand: dict[int, int] | None = None
+) -> list[tuple[object, GenerationItem]]:
     """One generation item per blueprint row, carrying the row's passages.
 
     Agent 1A plans per *question*; Agent 2A is handed one *row* at a time and
     over-generates within it. The passages are the row's, so they are taken from
     its first planned question rather than retrieved a second time.
+
+    `demand` overrides how many questions a row still needs *written* (M12).
+    A row whose slots came out of the bank asks for fewer, or for none — the
+    row still wants `row.count` questions, and some of them already exist.
+    Anything not named in the mapping is generated in full, so a caller with no
+    bank in play passes nothing and gets M8's behaviour exactly.
     """
+    from dataclasses import replace
+
     pairs = []
     for row in plan.blueprint.rows.select_related("topic", "blueprint__exam__course"):
         planned = plan.questions_for_row(row.pk)
         passages = planned[0].passages if planned else ()
-        pairs.append((row, item_for_row(row, passages)))
+        item = item_for_row(row, passages)
+        if demand is not None and row.pk in demand:
+            item = replace(item, count=max(int(demand[row.pk]), 0))
+        pairs.append((row, item))
     return pairs
 
 
@@ -612,6 +659,7 @@ def run_plan(
     max_rounds: int = MAX_GAP_FILL_ROUNDS,
     python_only: bool = False,
     persist: bool = True,
+    demand: dict[int, int] | None = None,
 ) -> OrchestrationRun:
     """Run the correction loop over every row of a grounded blueprint.
 
@@ -620,7 +668,7 @@ def run_plan(
     attempted is more honest than one marked as having failed.
     """
     run = OrchestrationRun(exam=plan.exam, plan=plan)
-    for row, item in items_for_plan(plan):
+    for row, item in items_for_plan(plan, demand=demand):
         result = run_item(
             item,
             provider=provider,
@@ -653,6 +701,7 @@ def run_exam(
     persist: bool = True,
     k=None,
     retrieve=None,
+    demand: dict[int, int] | None = None,
 ) -> OrchestrationRun:
     """Ground the exam's blueprint (1A), then run the loop over it (2A → 3A).
 
@@ -680,10 +729,13 @@ def run_exam(
         max_rounds=max_rounds,
         python_only=python_only,
         persist=persist,
+        demand=demand,
     )
 
 
 __all__ = [
+    "BANK_NOTE",
+    "CARRIED_NOTE",
     "MAX_GAP_FILL_ROUNDS",
     "NEEDS_ATTENTION",
     "PASSED",

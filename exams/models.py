@@ -74,6 +74,35 @@ class Exam(models.Model):
         default=FormSharing.SEPARATE,
         help_text="Whether the forms may share questions.",
     )
+    class Sourcing(models.TextChoices):
+        """Where this exam's questions come from (M12).
+
+        The bank exists from the moment an instructor approves their first
+        question, so from the second exam onwards "write everything again" is a
+        choice rather than the only road. It is asked on the spec screen and
+        can still be changed on the Generate screen, because it is a decision
+        about *this run* and the instructor may only realise the bank is worth
+        drawing on when they are looking at it.
+        """
+
+        NEW = "new", "Fully new — write every question from the content"
+        BANK = "bank", "From the bank — reuse questions I have already approved"
+        MIX = "mix", "A mix — part bank, part newly written"
+
+    sourcing = models.CharField(
+        max_length=8,
+        choices=Sourcing.choices,
+        default=Sourcing.NEW,
+        help_text="Where this exam's questions come from.",
+    )
+    #: What share of the *whole exam* should come from the bank when `sourcing`
+    #: is `mix`. One ratio for the paper, not one per row: an instructor thinks
+    #: "about half of this should be questions I already trust", not "40% of the
+    #: multi-step numerics on chapter 4". How that share lands on the rows is
+    #: arithmetic — see `bank.services.sourcing.plan_sourcing`.
+    bank_share_percent = models.PositiveIntegerField(
+        default=50, help_text="Share of the whole exam to draw from the bank, when mixing."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -112,6 +141,25 @@ class Exam(models.Model):
     @property
     def has_forms(self) -> bool:
         return self.forms.exists()
+
+    @property
+    def draws_on_bank(self) -> bool:
+        """Whether any of this exam's questions may come from the bank (M12)."""
+        return self.sourcing in {self.Sourcing.BANK, self.Sourcing.MIX}
+
+    @property
+    def bank_share(self) -> int:
+        """The share of the exam to source from the bank, as a whole percent.
+
+        Resolved from the mode rather than read raw, so the two fields cannot
+        disagree: a fully-new exam draws nothing however the slider was left,
+        and a from-bank exam draws everything it can.
+        """
+        if self.sourcing == self.Sourcing.BANK:
+            return 100
+        if self.sourcing == self.Sourcing.MIX:
+            return max(0, min(100, int(self.bank_share_percent)))
+        return 0
 
 
 class Blueprint(models.Model):
@@ -263,6 +311,19 @@ class Question(models.Model):
     #: change is also an update and "approved" is not "edited".
     instructor_edited = models.BooleanField(default=False)
     edited_at = models.DateTimeField(null=True, blank=True)
+    #: Set when this question was pulled out of the course's bank rather than
+    #: written for this exam (M12). Like `instructor_edited`, it makes the
+    #: question untouchable by the automatic loop — a reused question was
+    #: approved once already, and regenerating over it would throw away the
+    #: instructor's earlier decision as silently as overwriting an edit would.
+    #: `SET_NULL` so emptying the bank does not delete papers built from it.
+    bank_source = models.ForeignKey(
+        "bank.BankQuestion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="copies",
+    )
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -286,9 +347,14 @@ class Question(models.Model):
         return self.status == self.Status.REJECTED
 
     @property
+    def is_from_bank(self) -> bool:
+        """Whether this question was reused rather than written for this exam."""
+        return self.bank_source_id is not None
+
+    @property
     def is_locked(self) -> bool:
         """Whether a generation cycle must leave this question alone."""
-        return self.instructor_edited
+        return self.instructor_edited or self.is_from_bank
 
     def mark_edited(self, *, save: bool = True) -> None:
         """Record that a human changed this question. Only views call this."""

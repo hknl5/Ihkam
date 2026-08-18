@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Question bank — {{ course.code }} — إحكام{% endblock %}
+
+{% block content %}
+{# M12's screen: the instructor's approvals, kept. Everything here was approved
+   on some earlier exam of this course, and nothing else can get in. #}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'courses:dashboard' %}">My courses</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ course.get_absolute_url }}"><span class="num">{{ course.code }}</span></a>
+  <span aria-hidden="true">/</span>
+  <span>Question bank</span>
+</nav>
+
+<div class="page-head">
+  <h1>Question bank</h1>
+  <p>
+    Questions you approved and kept, for {{ course.code }}. They carry their answer
+    key, their topic, their level, what they were worth and where in your content
+    they came from — so a later exam can be built from them without writing them
+    again. A question is reused within this course only.
+  </p>
+</div>
+
+<div class="card">
+  <p class="caption">
+    <span class="num">{{ total }}</span> question{{ total|pluralize }} in this
+    course's bank{% if exam %} · sourcing <span dir="auto">{{ exam.display_title }}</span>{% endif %}
+  </p>
+
+  {# Search posts, because it spends one embedding call. The filters are plain
+     database work and ride along with it. #}
+  <form method="post" action="{% url 'bank:browse' course.pk %}">
+    {% csrf_token %}
+    {% if exam %}<input type="hidden" name="exam" value="{{ exam.pk }}">{% endif %}
+    {% for field in form %}
+      {% include "partials/field.html" with field=field %}
+    {% endfor %}
+    <div class="action-bar">
+      <button type="submit" class="btn btn--primary">Search the bank</button>
+      <a class="btn btn--ghost"
+         href="{% url 'bank:browse' course.pk %}{% if exam %}?exam={{ exam.pk }}{% endif %}">
+        Show everything
+      </a>
+    </div>
+  </form>
+
+  {% if search and not search.error %}
+    <p class="status status--info">{{ search.summary }}</p>
+  {% endif %}
+
+  <div class="action-bar">
+    <a class="btn btn--secondary" href="{% url 'exams:list' course.pk %}">Exams</a>
+    {% if exam %}
+      <a class="btn btn--secondary" href="{% url 'exams:generate' course.pk exam.pk %}">
+        Back to Generate
+      </a>
+      <a class="btn btn--secondary" href="{% url 'exams:review' course.pk exam.pk %}">
+        Go to Review
+      </a>
+    {% endif %}
+  </div>
+
+  {# Sourcing needs an exam in hand. Arriving without one, the instructor picks
+     which exam they are filling — rather than finding buttons that do nothing. #}
+  {% if not exam and exams %}
+    <form method="get" action="{% url 'bank:browse' course.pk %}" class="action-bar">
+      <label for="exam-pick">Pull questions into</label>
+      <select name="exam" id="exam-pick">
+        {% for item in exams %}
+          <option value="{{ item.pk }}">{{ item.display_title }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn--secondary">Use this bank for that exam</button>
+    </form>
+  {% endif %}
+</div>
+
+{% if questions %}
+  <div class="stack stack--loose" style="margin-block-start: var(--space-6);">
+    {% for banked in questions %}
+      {% include "bank/partials/bank_card.html" with banked=banked %}
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <h2>Nothing in the bank yet</h2>
+    <p>
+      A question reaches the bank when you approve it on a review screen and press
+      <strong>Save to bank</strong>. From then on it is material for every later
+      exam in {{ course.code }}.
+    </p>
+    <div class="action-bar" style="justify-content: center;">
+      <a class="btn btn--primary" href="{% url 'exams:list' course.pk %}">Go to exams</a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

@@ -43,6 +43,8 @@ class ExamForm(forms.ModelForm):
             "language",
             "number_of_forms",
             "form_sharing",
+            "sourcing",
+            "bank_share_percent",
         )
         labels = {
             "title": "Name (optional)",
@@ -53,6 +55,8 @@ class ExamForm(forms.ModelForm):
             "language": "Question language",
             "number_of_forms": "Forms",
             "form_sharing": "How the forms relate",
+            "sourcing": "Where the questions come from",
+            "bank_share_percent": "Share from the bank (%)",
         }
         help_texts = {
             "title": "For telling three quizzes apart. Left blank, the type is used.",
@@ -61,10 +65,19 @@ class ExamForm(forms.ModelForm):
                 "Fully separate needs twice the questions. If the pool cannot cover "
                 "both papers, إحكام says so rather than quietly reusing a question."
             ),
+            "sourcing": (
+                "Questions you have approved and saved are in this course's bank. "
+                "An exam can be written from scratch, drawn from the bank, or both."
+            ),
+            "bank_share_percent": (
+                "One ratio for the whole paper. If the bank cannot cover that share, "
+                "إحكام says by how much and writes the rest."
+            ),
         }
         widgets = {
             "title": forms.TextInput(attrs={"placeholder": "Midterm — week 7"}),
             "form_sharing": forms.RadioSelect,
+            "sourcing": forms.RadioSelect,
         }
 
     def __init__(self, *args, **kwargs):
@@ -74,6 +87,12 @@ class ExamForm(forms.ModelForm):
         # and stored — hiding a question is not the same as discarding it.
         self.fields["number_of_forms"].widget.attrs.update({"min": "1", "max": str(MAX_FORMS)})
         self.fields["form_sharing"].required = False
+        # The share is only asked about in `mix`, and the two other modes
+        # resolve it themselves (`Exam.bank_share`). Leaving it out of a posted
+        # form is therefore not an error — see `clean_bank_share_percent`.
+        self.fields["sourcing"].required = False
+        self.fields["bank_share_percent"].required = False
+        self.fields["bank_share_percent"].widget.attrs.update({"min": "0", "max": "100"})
 
     @property
     def show_sharing(self) -> bool:
@@ -111,6 +130,31 @@ class ExamForm(forms.ModelForm):
         validation error on a question the instructor was never asked.
         """
         return self.cleaned_data.get("form_sharing") or Exam.FormSharing.SEPARATE
+
+    def clean_sourcing(self):
+        """An unanswered sourcing question means a fully new exam.
+
+        The same rule as `clean_form_sharing`: an instructor who was not asked
+        has not chosen, and the safe reading of silence is the behaviour every
+        milestone before M12 had.
+        """
+        return self.cleaned_data.get("sourcing") or Exam.Sourcing.NEW
+
+    def clean_bank_share_percent(self):
+        """A share is a percentage, and a blank one is the field's default.
+
+        Kept in range here rather than trusted from the widget: the number
+        decides how much of a paper is reused, and a 400% share would be a
+        silent request for questions that do not exist.
+        """
+        value = self.cleaned_data.get("bank_share_percent")
+        if value in (None, ""):
+            return Exam._meta.get_field("bank_share_percent").default
+        if value > 100:
+            raise forms.ValidationError(
+                "A share of the exam cannot be more than 100%."
+            )
+        return value
 
     def _positive(self, field, message):
         value = self.cleaned_data[field]

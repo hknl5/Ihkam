@@ -304,7 +304,26 @@ def exam_generate(request, pk, exam_pk):
     report = validate_blueprint(board) if board is not None else None
     can_generate = bool(board is not None and report.is_valid and board.rows.exists())
 
+    from bank.forms import SourcingForm
+    from bank.services.sourcing import fill_from_bank, plan_sourcing
+
     if request.method == "POST":
+        # The sourcing choice is editable here, and saving it is a press of its
+        # own: an instructor adjusting the ratio is not asking for the run yet.
+        if request.POST.get("action") == "sourcing":
+            sourcing = SourcingForm(request.POST, instance=exam)
+            if sourcing.is_valid():
+                sourcing.save()
+                messages.success(
+                    request,
+                    "Sourcing saved. " + plan_sourcing(exam).summary,
+                )
+            else:
+                messages.error(
+                    request, "That sourcing choice could not be saved — check the share."
+                )
+            return redirect(_generate_url(exam))
+
         if board is None:
             messages.warning(
                 request,
@@ -323,13 +342,21 @@ def exam_generate(request, pk, exam_pk):
         from agents.orchestrator import OrchestrationError, run_exam
         from courses.services.retrieval import RetrievalError
 
+        # M12: the bank first, then the loop for whatever is left. In this order
+        # because the loop must be told what is genuinely missing — generating
+        # first and discarding the surplus would spend calls on questions the
+        # instructor already owns.
+        sourcing_plan = plan_sourcing(exam)
+        pulled = fill_from_bank(exam, sourcing_plan) if sourcing_plan.draws_on_bank else []
+        _report_sourcing(request, sourcing_plan, pulled)
+
         try:
-            run = run_exam(exam)
+            run = run_exam(exam, demand=sourcing_plan.demand or None)
         except (OrchestrationError, RetrievalError) as exc:
             messages.error(request, f"The generation run stopped: {exc}")
             return redirect(_generate_url(exam))
 
-        return _report_run(request, exam, run)
+        return _report_run(request, exam, run, sourced=len(pulled))
 
     return render(
         request,
@@ -341,15 +368,46 @@ def exam_generate(request, pk, exam_pk):
             "report": report,
             "can_generate": can_generate,
             "existing": exam.questions.count(),
+            # Free: the split and its shortfalls are database arithmetic, so the
+            # instructor sees them while the ratio is still theirs to change.
+            "sourcing_form": SourcingForm(instance=exam),
+            "sourcing_plan": plan_sourcing(exam) if board is not None else None,
         },
     )
+
+
+def _report_sourcing(request, plan, pulled) -> None:
+    """Say what the bank supplied, and — if it fell short — say that too.
+
+    The shortfall is reported *before* the loop runs and in the instructor's own
+    terms ("Bank has 3 for X, 5 needed"), because the answer to it is a decision
+    only they can take: lower the share, or let إحكام write the rest. What
+    happens meanwhile is never a short exam — the remainder goes to generation.
+    """
+    if not plan.draws_on_bank:
+        return
+    if pulled:
+        messages.success(
+            request,
+            f"{len(pulled)} question{'s' if len(pulled) != 1 else ''} pulled from the "
+            f"{plan.exam.course.code} bank, approved as you banked "
+            f"{'them' if len(pulled) != 1 else 'it'}. " + plan.summary,
+        )
+    if plan.is_short:
+        messages.warning(
+            request,
+            f"The bank could not cover the {plan.share_percent}% asked for — it is "
+            f"{plan.short_by} question{'s' if plan.short_by != 1 else ''} short. "
+            + " ".join(plan.shortfalls)
+            + " Nothing is left out: إحكام is writing the remainder.",
+        )
 
 
 def _generate_url(exam) -> str:
     return reverse("exams:generate", args=[exam.course_id, exam.pk])
 
 
-def _report_run(request, exam, run):
+def _report_run(request, exam, run, *, sourced: int = 0):
     """Say what the run produced, then land where the instructor can act on it."""
     produced = len(run.questions)
     attention = _attention_lines(run)
@@ -368,6 +426,16 @@ def _report_run(request, exam, run):
             f"{produced} question{'s' if produced != 1 else ''} written, and "
             f"{len(attention)} row{'s' if len(attention) != 1 else ''} needs manual "
             f"attention: " + "; ".join(attention) + ".",
+        )
+    elif not produced and sourced:
+        # Nothing was written because nothing needed writing. Saying "0
+        # questions written" here would read as a failed run when it is the
+        # opposite: the bank covered the paper.
+        messages.success(
+            request,
+            f"Nothing needed writing — all {sourced} question"
+            f"{'s' if sourced != 1 else ''} came from the bank, approved as you "
+            f"banked {'them' if sourced != 1 else 'it'}.",
         )
     else:
         messages.success(
@@ -638,6 +706,9 @@ def question_action(request, pk, exam_pk, question_pk):
                 ),
             )
 
+    elif action == "save_to_bank":
+        _bank_question(request, question)
+
     elif action == "move":
         _move_question(request, exam, question)
 
@@ -648,6 +719,40 @@ def question_action(request, pk, exam_pk, question_pk):
         messages.error(request, f"There is no “{action}” action.")
 
     return redirect(_review_url(exam))
+
+
+def _bank_question(request, question) -> None:
+    """Keep this approved question for the next exam of this course (M12).
+
+    The one act that makes an approval outlive its exam. It costs one embedding
+    call — the banked stem is indexed for search as it is saved — and nothing
+    else; the copy is plain Python over fields.
+    """
+    from bank.services.save import BankError, save_to_bank
+
+    try:
+        banked = save_to_bank(question)
+    except BankError as exc:
+        messages.warning(request, str(exc))
+        return
+
+    where = reverse("bank:browse", args=[question.exam.course_id])
+    if banked.is_indexed:
+        messages.success(
+            request,
+            f"Saved to the {question.exam.course.code} bank with its answer key, its "
+            f"topic and its source. Any later exam for this course can draw on it. "
+            f"See the bank: {where}",
+        )
+    else:
+        # An honest half-success. The question is banked and reusable; it is
+        # simply not rankable by search until it has a vector.
+        messages.warning(
+            request,
+            f"Saved to the {question.exam.course.code} bank, but its stem could not "
+            f"be embedded, so search will not find it until it is re-embedded. It is "
+            f"in the list and can be pulled into an exam as normal: {where}",
+        )
 
 
 def _move_question(request, exam, question) -> None:
